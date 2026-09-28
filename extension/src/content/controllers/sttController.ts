@@ -147,6 +147,16 @@ export class SttController {
           },
         },
         (response) => {
+          if (chrome.runtime.lastError) {
+            const err = chrome.runtime.lastError.message || 'Erro de conexão com a extensão';
+            console.error('[STT Controller] Runtime error:', err);
+            hud.setStatus('idle', 'Falha no STT');
+            hud.setTextPreview(`❌ Erro: ${err}`);
+            this.queue.shift();
+            this.processNextInQueue();
+            return;
+          }
+
           if (!response || !response.success || !response.data?.text) {
             const err = response?.error || 'Erro na transcrição';
             console.error('[STT Controller]', err);

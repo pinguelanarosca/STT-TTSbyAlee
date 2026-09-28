@@ -3,12 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  * 
  * Página Completa de Opções da Extensão Chrome (React 19 + TypeScript).
- * Estrutura de abas atualizada:
+ * Estrutura de abas:
  * 1. Chave Gemini & Testes (api)
  * 2. Agentes & Personas (agents) - Centro unificado de agentes, super editor de áudio, testes TTS/STT e modelos
- * 3. Atalhos de Teclado (shortcuts)
- * 4. Histórico & Logs (history)
- * 5. ChatGPT & Integração (chatgpt) - Última aba
+ * 3. Atalhos de Teclado Editáveis (shortcuts)
+ * 4. Histórico & Logs em Tempo Real (history)
+ * 5. ChatGPT & Integração (chatgpt)
  */
 
 import React, { useEffect, useState, useRef } from 'react';
@@ -37,12 +37,15 @@ import {
   Radio,
   Eye,
   Settings2,
+  RotateCcw,
 } from 'lucide-react';
-import { AppStorageSchema } from '@shared/types/storage';
+import { AppStorageSchema, HistoryItem } from '@shared/types/storage';
 import { CanonicalAgent, GeminiVoiceName, AmbienceType } from '@shared/types/agent';
-import { DEFAULT_AGENTS, getCanonicalAgent } from '@shared/constants/defaultAgents';
+import { DEFAULT_AGENTS } from '@shared/constants/defaultAgents';
+import { DEFAULT_UI_PREFERENCES } from '@shared/constants/defaultSettings';
 import { KNOWN_MODELS, TASK_FALLBACK_CHAINS, validateAgentModelIntegrity } from '@shared/constants/modelsCatalog';
 import { base64ToUint8Array } from '@shared/utils/pcmWav';
+import { formatShortcutDisplay, recordShortcutFromEvent } from '@shared/utils/shortcutMatcher';
 import { chromeStorage } from '../services/storage/chromeStorageAdapter';
 import { geminiDirectClient } from '../services/geminiDirectClient';
 
@@ -63,6 +66,9 @@ export const OptionsApp: React.FC = () => {
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<{ success?: boolean; message?: string } | null>(null);
   const [isTesting, setIsTesting] = useState(false);
+
+  // Estado dos atalhos editáveis
+  const [recordingAction, setRecordingAction] = useState<string | null>(null);
 
   // Estado do editor unificado de agente
   const [selectedAgentId, setSelectedAgentId] = useState<string>('narrator');
@@ -96,11 +102,62 @@ export const OptionsApp: React.FC = () => {
       setAgentForm(JSON.parse(JSON.stringify(found)));
       setIsCustomAgent(!found.metadata.isBuiltIn);
     });
+
+    // Inscreve para atualizações do histórico em tempo real
+    const unsubscribeHistory = chromeStorage.subscribe('history', (newHistory) => {
+      setStorageState((prev) => (prev ? { ...prev, history: newHistory } : null));
+    });
+
+    return () => {
+      unsubscribeHistory();
+    };
   }, []);
+
+  // Gravador de Teclas para Atalhos
+  useEffect(() => {
+    if (!recordingAction) return;
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const newShortcut = recordShortcutFromEvent(e);
+      if (newShortcut && storageState) {
+        const currentShortcuts = storageState.ui.shortcuts || DEFAULT_UI_PREFERENCES.shortcuts;
+        const updatedShortcuts = { ...currentShortcuts, [recordingAction]: newShortcut };
+
+        chromeStorage.setPartial('ui', { shortcuts: updatedShortcuts }).then(() => {
+          setStorageState({
+            ...storageState,
+            ui: { ...storageState.ui, shortcuts: updatedShortcuts },
+          });
+          notifySaved(`Atalho atualizado: ${formatShortcutDisplay(newShortcut)}`);
+        });
+
+        setRecordingAction(null);
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown, true);
+    };
+  }, [recordingAction, storageState]);
 
   const notifySaved = (msg: string = 'Configurações salvas!') => {
     setSavedNotice(msg);
     setTimeout(() => setSavedNotice(null), 3000);
+  };
+
+  const handleResetShortcuts = async () => {
+    if (!storageState) return;
+    const defaultShortcuts = DEFAULT_UI_PREFERENCES.shortcuts;
+    await chromeStorage.setPartial('ui', { shortcuts: defaultShortcuts });
+    setStorageState({
+      ...storageState,
+      ui: { ...storageState.ui, shortcuts: defaultShortcuts },
+    });
+    notifySaved('Atalhos restaurados para o padrão.');
   };
 
   // Carregar agente no editor ao mudar seletor
@@ -113,7 +170,6 @@ export const OptionsApp: React.FC = () => {
     setAgentForm(JSON.parse(JSON.stringify(target)));
     setIsCustomAgent(!target.metadata.isBuiltIn);
 
-    // Persiste imediatamente como agente ativo da extensão
     chromeStorage.setPartial('agents', { activeAgentId: agentId });
     setStorageState({
       ...storageState,
@@ -152,7 +208,7 @@ export const OptionsApp: React.FC = () => {
     }
   };
 
-  // Super Motor de Áudio Web Audio com Equalizador & Ambience
+  // Web Audio com Equalizador & Ambience
   const playAudioWithAcousticFilters = async (audioBytes: Uint8Array, rate: number, volume: number) => {
     try {
       if (activeSourceRef.current) {
@@ -169,37 +225,31 @@ export const OptionsApp: React.FC = () => {
         await ctx.resume();
       }
 
-      // Decodifica buffer
       const arrayBuffer = audioBytes.buffer.slice(audioBytes.byteOffset, audioBytes.byteOffset + audioBytes.byteLength) as ArrayBuffer;
       const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
       const source = ctx.createBufferSource();
       source.buffer = audioBuffer;
       source.playbackRate.value = Math.max(0.5, Math.min(2.0, rate || 1.0));
 
-      // 1. Equalizador - Graves (Low Shelf)
       const bassFilter = ctx.createBiquadFilter();
       bassFilter.type = 'lowshelf';
       bassFilter.frequency.value = 250;
       bassFilter.gain.value = agentForm.voice.bass ?? 0;
 
-      // 2. Equalizador - Médios (Peaking)
       const midFilter = ctx.createBiquadFilter();
       midFilter.type = 'peaking';
       midFilter.frequency.value = 1200;
       midFilter.Q.value = 0.8;
       midFilter.gain.value = agentForm.voice.mid ?? 0;
 
-      // 3. Equalizador - Agudos (High Shelf)
       const trebleFilter = ctx.createBiquadFilter();
       trebleFilter.type = 'highshelf';
       trebleFilter.frequency.value = 3500;
       trebleFilter.gain.value = agentForm.voice.treble ?? 0;
 
-      // 4. Ganho Master
       const gainNode = ctx.createGain();
       gainNode.gain.value = Math.max(0, Math.min(1.0, volume ?? 1.0));
 
-      // Conexão do Pipeline de Áudio
       source.connect(bassFilter);
       bassFilter.connect(midFilter);
       midFilter.connect(trebleFilter);
@@ -214,7 +264,7 @@ export const OptionsApp: React.FC = () => {
       source.start(0);
       setIsPlayingAudio(true);
     } catch (err) {
-      console.error('[Web Audio] Erro ao reproduzir com filtros:', err);
+      console.error('[Web Audio] Erro ao reproduzir:', err);
       setIsPlayingAudio(false);
     }
   };
@@ -229,7 +279,23 @@ export const OptionsApp: React.FC = () => {
     setIsPlayingAudio(false);
   };
 
-  // Testar Síntese TTS com parâmetros atuais em edição
+  const appendHistoryItem = async (type: 'tts' | 'stt' | 'vision', text: string, status: 'success' | 'error' = 'success', errorDetails?: string) => {
+    try {
+      const historyData = await chromeStorage.get('history');
+      const newItem: HistoryItem = {
+        id: `hist-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        timestamp: Date.now(),
+        type,
+        agentId: selectedAgentId,
+        previewText: status === 'error' ? `❌ [ERRO] ${text}` : text,
+        status,
+        errorDetails,
+      };
+      const updated = [newItem, ...(historyData.recentItems || [])].slice(0, 50);
+      await chromeStorage.setPartial('history', { recentItems: updated });
+    } catch (_) {}
+  };
+
   const handleTestTTS = async () => {
     if (!ttsTestText.trim()) return;
     if (!storageState?.api.apiKey) {
@@ -251,22 +317,20 @@ export const OptionsApp: React.FC = () => {
         storageState.api.apiKey
       );
 
-      // Decodifica Base64 de alta performance
       const bytes = base64ToUint8Array(response.audioBase64);
-
       await playAudioWithAcousticFilters(bytes, agentForm.voice.rateMultiplier, agentForm.voice.volume);
+      await appendHistoryItem('tts', ttsTestText.length > 80 ? ttsTestText.substring(0, 80) + '...' : ttsTestText, 'success');
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      await appendHistoryItem('tts', ttsTestText.substring(0, 60), 'error', msg);
       alert(`Falha na síntese TTS: ${msg}`);
     } finally {
       setIsSynthesizing(false);
     }
   };
 
-  // Testar Gravação e Transcrição STT
   const handleToggleRecordSTT = async () => {
     if (isRecording) {
-      // Parar gravação e transcrever
       if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
         mediaRecorderRef.current.stop();
       }
@@ -279,7 +343,7 @@ export const OptionsApp: React.FC = () => {
       try {
         audioChunksRef.current = [];
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const mediaRecorder = new MediaRecorder(stream);
+        const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
 
         mediaRecorder.ondataavailable = (e) => {
           if (e.data.size > 0) audioChunksRef.current.push(e.data);
@@ -305,11 +369,13 @@ export const OptionsApp: React.FC = () => {
               );
               setSttTestText(text);
               setIsTranscribing(false);
+              await appendHistoryItem('stt', text.length > 80 ? text.substring(0, 80) + '...' : text, 'success');
             };
             reader.readAsDataURL(audioBlob);
           } catch (err) {
             setIsTranscribing(false);
             const msg = err instanceof Error ? err.message : String(err);
+            await appendHistoryItem('stt', 'Teste de Ditado', 'error', msg);
             alert(`Falha no STT: ${msg}`);
           }
         };
@@ -323,7 +389,6 @@ export const OptionsApp: React.FC = () => {
     }
   };
 
-  // Ações de Salvamento / Criação de Agente
   const handleCreateNewAgentFromCurrent = async () => {
     if (!storageState) return;
 
@@ -423,7 +488,7 @@ export const OptionsApp: React.FC = () => {
     );
   }
 
-  const allAgents = [...DEFAULT_AGENTS, ...storageState.agents.customAgents];
+  const currentShortcuts = storageState.ui.shortcuts || DEFAULT_UI_PREFERENCES.shortcuts;
 
   return (
     <div style={{ maxWidth: 980, margin: '0 auto', padding: '32px 20px', fontFamily: 'system-ui, -apple-system, sans-serif', color: '#f8fafc' }}>
@@ -444,14 +509,14 @@ export const OptionsApp: React.FC = () => {
         </div>
 
         {savedNotice && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(16, 185, 129, 0.15)', border: '1px solid #10b981', color: '#34d399', padding: '6px 14px', borderRadius: 8, fontSize: 13, fontWeight: 500, animation: 'fadeIn 0.2s ease-in-out' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(16, 185, 129, 0.15)', border: '1px solid #10b981', color: '#34d399', padding: '6px 14px', borderRadius: 8, fontSize: 13, fontWeight: 500 }}>
             <CheckCircle size={16} />
             <span>{savedNotice}</span>
           </div>
         )}
       </div>
 
-      {/* Navegação de Abas Atualizada: ChatGPT é a ÚLTIMA aba */}
+      {/* Navegação de Abas */}
       <div style={{ display: 'flex', gap: 8, borderBottom: '1px solid #1e293b', paddingBottom: 8, marginBottom: 24, overflowX: 'auto' }}>
         {[
           { key: 'api', label: 'Chave Gemini & Testes', icon: Key },
@@ -498,8 +563,7 @@ export const OptionsApp: React.FC = () => {
             <span>Chave de API do Google AI Studio (Gemini)</span>
           </h2>
           <p style={{ fontSize: 13, color: '#94a3b8', margin: '0 0 20px', lineHeight: 1.5 }}>
-            A extensão utiliza sua chave para acessar os modelos de áudio nativo <code>gemini-3.8-flash-lite-tts</code> e transcrição <code>gemini-3.5-transcribe</code>.
-            A chave fica armazenada com segurança no seu navegador através de <code>chrome.storage.local</code>.
+            A extensão utiliza sua chave para acessar os modelos de áudio nativo <code>gemini-3.8-flash-lite-tts</code> e transcrição <code>gemini-3.5-flash-lite</code>.
           </p>
 
           <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
@@ -537,7 +601,6 @@ export const OptionsApp: React.FC = () => {
                 display: 'flex',
                 alignItems: 'center',
                 gap: 6,
-                boxShadow: '0 4px 12px rgba(59, 130, 246, 0.3)',
               }}
             >
               <Save size={16} />
@@ -600,19 +663,18 @@ export const OptionsApp: React.FC = () => {
       )}
 
       {/* ========================================================================= */}
-      {/* ABA 2: AGENTES E PERSONAS (CENTRO PRINCIPAL DE CONFIGURAÇÃO) */}
+      {/* ABA 2: AGENTES E PERSONAS */}
       {/* ========================================================================= */}
       {activeTab === 'agents' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-          {/* 1. SELETOR GRANDE DE AGENTE ATIVO NO TOPO */}
-          <div style={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 14, padding: 20, boxShadow: '0 4px 20px rgba(0,0,0,0.3)' }}>
+          <div style={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 14, padding: 20 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
               <label style={{ fontSize: 14, fontWeight: 700, color: '#f8fafc', display: 'flex', alignItems: 'center', gap: 8 }}>
                 <Users size={18} color="#38bdf8" />
                 <span>Agente Ativo no Navegador</span>
               </label>
-              <span style={{ fontSize: 11, background: isCustomAgent ? 'rgba(99, 102, 241, 0.2)' : 'rgba(148, 163, 184, 0.15)', color: isCustomAgent ? '#a5b4fc' : '#94a3b8', padding: '3px 10px', borderRadius: 999, border: isCustomAgent ? '1px solid rgba(99, 102, 241, 0.4)' : '1px solid rgba(148, 163, 184, 0.3)' }}>
-                {isCustomAgent ? 'Personalizado' : 'De Fábrica (Canônico)'}
+              <span style={{ fontSize: 11, background: isCustomAgent ? 'rgba(99, 102, 241, 0.2)' : 'rgba(148, 163, 184, 0.15)', color: isCustomAgent ? '#a5b4fc' : '#94a3b8', padding: '3px 10px', borderRadius: 999 }}>
+                {isCustomAgent ? 'Personalizado' : 'De Fábrica'}
               </span>
             </div>
 
@@ -637,10 +699,10 @@ export const OptionsApp: React.FC = () => {
                   cursor: 'pointer',
                 }}
               >
-                <optgroup label="Agentes de Fábrica (8 Canônicos)">
+                <optgroup label="Agentes de Fábrica">
                   {DEFAULT_AGENTS.map((ag) => (
                     <option key={ag.metadata.id} value={ag.metadata.id}>
-                      {ag.metadata.name} — ({ag.voice.preferredVoice}, {ag.metadata.category})
+                      {ag.metadata.name} — ({ag.voice.preferredVoice})
                     </option>
                   ))}
                 </optgroup>
@@ -657,7 +719,6 @@ export const OptionsApp: React.FC = () => {
             </div>
           </div>
 
-          {/* 2. IDENTIDADE / DESCRIÇÃO DO AGENTE */}
           <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 14, padding: 22 }}>
             <h3 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 16px', color: '#f8fafc', display: 'flex', alignItems: 'center', gap: 8 }}>
               <Settings2 size={16} color="#38bdf8" />
@@ -689,27 +750,6 @@ export const OptionsApp: React.FC = () => {
                   <option value="custom">Personalizado</option>
                 </select>
               </div>
-
-              <div>
-                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#94a3b8', marginBottom: 6 }}>Cor da Persona:</label>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  {['#3b82f6', '#10b981', '#8b5cf6', '#f59e0b', '#06b6d4', '#14b8a6', '#f43f5e', '#ec4899'].map((col) => (
-                    <button
-                      key={col}
-                      type="button"
-                      onClick={() => setAgentForm({ ...agentForm, metadata: { ...agentForm.metadata, color: col } })}
-                      style={{
-                        width: 24,
-                        height: 24,
-                        borderRadius: '50%',
-                        background: col,
-                        border: agentForm.metadata.color === col ? '2px solid #ffffff' : '2px solid transparent',
-                        cursor: 'pointer',
-                      }}
-                    />
-                  ))}
-                </div>
-              </div>
             </div>
 
             <div>
@@ -723,551 +763,137 @@ export const OptionsApp: React.FC = () => {
             </div>
           </div>
 
-          {/* 3. PERSONALIZAÇÃO TTS */}
-          <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 14, padding: 22 }}>
-            <h3 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 10px', color: '#f8fafc', display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Volume2 size={16} color="#38bdf8" />
-              <span>Personalização do Sistema para Leitura (TTS)</span>
-            </h3>
-            <p style={{ fontSize: 12, color: '#94a3b8', margin: '0 0 10px' }}>
-              Define a entonação, o estilo vocal, supressão de ruídos de navegação e formatação que o Gemini deve aplicar ao ler textos.
-            </p>
-            <textarea
-              rows={3}
-              value={agentForm.instructions.ttsSystemInstruction}
-              onChange={(e) =>
-                setAgentForm({
-                  ...agentForm,
-                  instructions: { ...agentForm.instructions, ttsSystemInstruction: e.target.value },
-                })
-              }
-              style={{ width: '100%', background: '#1e293b', border: '1px solid #334155', borderRadius: 8, color: '#f8fafc', padding: 12, fontSize: 13, boxSizing: 'border-box', lineHeight: 1.5 }}
-            />
-          </div>
-
-          {/* 4. PERSONALIZAÇÃO STT */}
-          <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 14, padding: 22 }}>
-            <h3 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 10px', color: '#f8fafc', display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Mic size={16} color="#f87171" />
-              <span>Personalização do Sistema para Ditado e Transcrição (STT)</span>
-            </h3>
-            <p style={{ fontSize: 12, color: '#94a3b8', margin: '0 0 10px' }}>
-              Instrução de formatação ortográfica, pontuação e polimento textual aplicada na transcrição do áudio gravado.
-            </p>
-            <textarea
-              rows={3}
-              value={agentForm.instructions.sttFormattingInstruction}
-              onChange={(e) =>
-                setAgentForm({
-                  ...agentForm,
-                  instructions: { ...agentForm.instructions, sttFormattingInstruction: e.target.value },
-                })
-              }
-              style={{ width: '100%', background: '#1e293b', border: '1px solid #334155', borderRadius: 8, color: '#f8fafc', padding: 12, fontSize: 13, boxSizing: 'border-box', lineHeight: 1.5 }}
-            />
-          </div>
-
-          {/* 5. SUPER EDITOR DE ÁUDIO TTS */}
-          <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 14, padding: 22 }}>
-            <h3 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 6px', color: '#f8fafc', display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Sliders size={16} color="#38bdf8" />
-              <span>Super Editor Acústico de Áudio TTS</span>
-            </h3>
-            <p style={{ fontSize: 12, color: '#94a3b8', margin: '0 0 20px' }}>
-              Equalização em tempo real (Bass/Mid/Treble), modelagem de ambiente (Reverb/Ambience) e controle de velocidade e tom.
-            </p>
-
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 18, marginBottom: 20 }}>
-              {/* Voz Gemini */}
-              <div>
-                <label style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 600, color: '#cbd5e1', marginBottom: 6 }}>
-                  <span>Voz Gemini:</span>
-                  <span style={{ color: '#38bdf8' }}>{agentForm.voice.preferredVoice}</span>
-                </label>
-                <select
-                  value={agentForm.voice.preferredVoice}
-                  onChange={(e) => setAgentForm({ ...agentForm, voice: { ...agentForm.voice, preferredVoice: e.target.value } })}
-                  style={{ width: '100%', background: '#1e293b', border: '1px solid #334155', borderRadius: 8, color: '#f8fafc', padding: '10px 12px', fontSize: 13, boxSizing: 'border-box' }}
-                >
-                  {GEMINI_VOICES.map((v) => (
-                    <option key={v} value={v}>{v}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Velocidade (Rate) */}
-              <div>
-                <label style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 600, color: '#cbd5e1', marginBottom: 6 }}>
-                  <span>Velocidade de Leitura:</span>
-                  <span style={{ fontFamily: 'monospace', color: '#38bdf8' }}>{(agentForm.voice.rateMultiplier || 1.0).toFixed(2)}x</span>
-                </label>
-                <input
-                  type="range"
-                  min="0.5"
-                  max="2.0"
-                  step="0.05"
-                  value={agentForm.voice.rateMultiplier || 1.0}
-                  onChange={(e) => setAgentForm({ ...agentForm, voice: { ...agentForm.voice, rateMultiplier: parseFloat(e.target.value) } })}
-                  style={{ width: '100%', accentColor: '#3b82f6', cursor: 'pointer' }}
-                />
-              </div>
-
-              {/* Pitch / Tom */}
-              <div>
-                <label style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 600, color: '#cbd5e1', marginBottom: 6 }}>
-                  <span>Tom Vocal (Pitch):</span>
-                  <span style={{ fontFamily: 'monospace', color: '#38bdf8' }}>{(agentForm.voice.pitchMultiplier || 1.0).toFixed(2)}x</span>
-                </label>
-                <input
-                  type="range"
-                  min="0.5"
-                  max="2.0"
-                  step="0.05"
-                  value={agentForm.voice.pitchMultiplier || 1.0}
-                  onChange={(e) => setAgentForm({ ...agentForm, voice: { ...agentForm.voice, pitchMultiplier: parseFloat(e.target.value) } })}
-                  style={{ width: '100%', accentColor: '#3b82f6', cursor: 'pointer' }}
-                />
-              </div>
-
-              {/* Volume Master */}
-              <div>
-                <label style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 600, color: '#cbd5e1', marginBottom: 6 }}>
-                  <span>Volume Master:</span>
-                  <span style={{ fontFamily: 'monospace', color: '#38bdf8' }}>{Math.round((agentForm.voice.volume ?? 1.0) * 100)}%</span>
-                </label>
-                <input
-                  type="range"
-                  min="0"
-                  max="1.0"
-                  step="0.05"
-                  value={agentForm.voice.volume ?? 1.0}
-                  onChange={(e) => setAgentForm({ ...agentForm, voice: { ...agentForm.voice, volume: parseFloat(e.target.value) } })}
-                  style={{ width: '100%', accentColor: '#3b82f6', cursor: 'pointer' }}
-                />
-              </div>
-            </div>
-
-            {/* Equalizador de 3 Bandas */}
-            <div style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 10, padding: 16, marginBottom: 18 }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
-                <Music size={14} color="#60a5fa" />
-                <span>Equalizador de Frequências Acústicas</span>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
-                {/* Bass */}
-                <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#cbd5e1', marginBottom: 4 }}>
-                    <span>Graves (Bass)</span>
-                    <span style={{ fontFamily: 'monospace', color: (agentForm.voice.bass ?? 0) > 0 ? '#34d399' : (agentForm.voice.bass ?? 0) < 0 ? '#f87171' : '#94a3b8' }}>
-                      {(agentForm.voice.bass ?? 0) > 0 ? `+${agentForm.voice.bass} dB` : `${agentForm.voice.bass ?? 0} dB`}
-                    </span>
-                  </div>
-                  <input
-                    type="range"
-                    min="-10"
-                    max="10"
-                    step="1"
-                    value={agentForm.voice.bass ?? 0}
-                    onChange={(e) => setAgentForm({ ...agentForm, voice: { ...agentForm.voice, bass: parseInt(e.target.value, 10) } })}
-                    style={{ width: '100%', accentColor: '#38bdf8', cursor: 'pointer' }}
-                  />
-                </div>
-
-                {/* Mid */}
-                <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#cbd5e1', marginBottom: 4 }}>
-                    <span>Médios (Mid)</span>
-                    <span style={{ fontFamily: 'monospace', color: (agentForm.voice.mid ?? 0) > 0 ? '#34d399' : (agentForm.voice.mid ?? 0) < 0 ? '#f87171' : '#94a3b8' }}>
-                      {(agentForm.voice.mid ?? 0) > 0 ? `+${agentForm.voice.mid} dB` : `${agentForm.voice.mid ?? 0} dB`}
-                    </span>
-                  </div>
-                  <input
-                    type="range"
-                    min="-10"
-                    max="10"
-                    step="1"
-                    value={agentForm.voice.mid ?? 0}
-                    onChange={(e) => setAgentForm({ ...agentForm, voice: { ...agentForm.voice, mid: parseInt(e.target.value, 10) } })}
-                    style={{ width: '100%', accentColor: '#38bdf8', cursor: 'pointer' }}
-                  />
-                </div>
-
-                {/* Treble */}
-                <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#cbd5e1', marginBottom: 4 }}>
-                    <span>Agudos (Treble)</span>
-                    <span style={{ fontFamily: 'monospace', color: (agentForm.voice.treble ?? 0) > 0 ? '#34d399' : (agentForm.voice.treble ?? 0) < 0 ? '#f87171' : '#94a3b8' }}>
-                      {(agentForm.voice.treble ?? 0) > 0 ? `+${agentForm.voice.treble} dB` : `${agentForm.voice.treble ?? 0} dB`}
-                    </span>
-                  </div>
-                  <input
-                    type="range"
-                    min="-10"
-                    max="10"
-                    step="1"
-                    value={agentForm.voice.treble ?? 0}
-                    onChange={(e) => setAgentForm({ ...agentForm, voice: { ...agentForm.voice, treble: parseInt(e.target.value, 10) } })}
-                    style={{ width: '100%', accentColor: '#38bdf8', cursor: 'pointer' }}
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Ambience / Reverb */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14 }}>
-              <div>
-                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#cbd5e1', marginBottom: 6 }}>
-                  Ambiente Acústico (Reverb):
-                </label>
-                <select
-                  value={agentForm.voice.ambience || 'none'}
-                  onChange={(e) => setAgentForm({ ...agentForm, voice: { ...agentForm.voice, ambience: e.target.value as AmbienceType } })}
-                  style={{ width: '100%', background: '#1e293b', border: '1px solid #334155', borderRadius: 8, color: '#f8fafc', padding: '10px 12px', fontSize: 13, boxSizing: 'border-box' }}
-                >
-                  {AMBIENCE_TYPES.map((amb) => (
-                    <option key={amb.id} value={amb.id}>{amb.label}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 600, color: '#cbd5e1', marginBottom: 6 }}>
-                  <span>Intensidade do Ambiente:</span>
-                  <span style={{ fontFamily: 'monospace', color: '#38bdf8' }}>{agentForm.voice.ambienceIntensity ?? 30}%</span>
-                </label>
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  step="5"
-                  value={agentForm.voice.ambienceIntensity ?? 30}
-                  onChange={(e) => setAgentForm({ ...agentForm, voice: { ...agentForm.voice, ambienceIntensity: parseInt(e.target.value, 10) } })}
-                  style={{ width: '100%', accentColor: '#3b82f6', cursor: 'pointer' }}
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* 6. TEXTO DE TESTE TTS + REPRODUÇÃO */}
-          <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 14, padding: 22 }}>
-            <h3 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 10px', color: '#f8fafc', display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Play size={16} color="#38bdf8" />
-              <span>Texto de Teste TTS (Pré-visualização de Áudio)</span>
-            </h3>
-            <p style={{ fontSize: 12, color: '#94a3b8', margin: '0 0 12px' }}>
-              Sintetiza o texto usando a configuração e os filtros de equalização atualmente selecionados, antes mesmo de salvar o agente.
-            </p>
-
-            <textarea
-              rows={3}
-              value={ttsTestText}
-              onChange={(e) => setTtsTestText(e.target.value)}
-              placeholder="Digite o texto de teste para síntese vocal..."
-              style={{ width: '100%', background: '#1e293b', border: '1px solid #334155', borderRadius: 8, color: '#f8fafc', padding: 12, fontSize: 13, boxSizing: 'border-box', marginBottom: 12 }}
-            />
-
+          <div style={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 14, padding: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
             <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-              <button
-                onClick={handleTestTTS}
-                disabled={isSynthesizing || isPlayingAudio}
-                style={{
-                  background: '#3b82f6',
-                  color: '#ffffff',
-                  border: 'none',
-                  borderRadius: 8,
-                  padding: '10px 18px',
-                  fontSize: 13,
-                  fontWeight: 600,
-                  cursor: isSynthesizing ? 'wait' : 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  boxShadow: '0 4px 12px rgba(59, 130, 246, 0.3)',
-                }}
-              >
-                {isSynthesizing ? (
-                  <RefreshCw size={16} className="animate-spin" />
-                ) : (
-                  <Volume2 size={16} />
-                )}
-                <span>{isSynthesizing ? 'Sintetizando Áudio...' : 'Sintetizar e Ouvir Fala'}</span>
-              </button>
-
-              {isPlayingAudio && (
-                <button
-                  onClick={stopAudio}
-                  style={{
-                    background: '#ef4444',
-                    color: '#ffffff',
-                    border: 'none',
-                    borderRadius: 8,
-                    padding: '10px 14px',
-                    fontSize: 13,
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 6,
-                  }}
-                >
-                  <Square size={14} />
-                  <span>Parar</span>
-                </button>
-              )}
-
-              {isPlayingAudio && (
-                <span style={{ fontSize: 12, color: '#38bdf8', display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#38bdf8', animation: 'pulse 1s infinite' }} />
-                  Reproduzindo com equalização ativa...
-                </span>
-              )}
-            </div>
-          </div>
-
-          {/* 7. TEXTO DE TESTE STT + GRAVAÇÃO / TRANSCRIÇÃO */}
-          <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 14, padding: 22 }}>
-            <h3 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 10px', color: '#f8fafc', display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Mic size={16} color="#f87171" />
-              <span>Texto de Teste STT (Gravação e Transcrição)</span>
-            </h3>
-            <p style={{ fontSize: 12, color: '#94a3b8', margin: '0 0 12px' }}>
-              Grave sua voz para testar a transcrição com a instrução e o modelo STT configurados para esta persona.
-            </p>
-
-            <div style={{ minHeight: 70, background: '#1e293b', border: '1px solid #334155', borderRadius: 8, padding: 12, fontSize: 13, color: sttTestText ? '#f8fafc' : '#64748b', marginBottom: 12, lineHeight: 1.5 }}>
-              {isTranscribing ? 'Processando transcrição com Gemini 3.5 Transcribe...' : sttTestText || 'O texto falado aparecerá aqui após a transcrição...'}
-            </div>
-
-            <button
-              onClick={handleToggleRecordSTT}
-              disabled={isTranscribing}
-              style={{
-                background: isRecording ? '#ef4444' : '#1e293b',
-                color: '#ffffff',
-                border: isRecording ? 'none' : '1px solid #334155',
-                borderRadius: 8,
-                padding: '10px 18px',
-                fontSize: 13,
-                fontWeight: 600,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-              }}
-            >
-              {isRecording ? <Square size={16} /> : <Mic size={16} color="#f87171" />}
-              <span>{isRecording ? '⏹ Parar Gravação e Transcrever' : '🎤 Gravar Áudio do Microfone'}</span>
-            </button>
-          </div>
-
-          {/* 8. MODELOS POR MODALIDADE */}
-          <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 14, padding: 22 }}>
-            <h3 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 8px', color: '#f8fafc', display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Radio size={16} color="#38bdf8" />
-              <span>Modelos de IA por Modalidade</span>
-            </h3>
-            <p style={{ fontSize: 12, color: '#94a3b8', margin: '0 0 16px' }}>
-              Configuração dos modelos oficiais do catálogo Gemini utilizados para cada função desta persona.
-            </p>
-
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 14 }}>
-              {/* Modelo TTS */}
-              <div>
-                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#cbd5e1', marginBottom: 4 }}>
-                  Modelo TTS (Síntese com Áudio Nativo):
-                </label>
-                <select
-                  value={agentForm.modelPreferences.ttsModelId || 'gemini-3.8-flash-lite-tts'}
-                  onChange={(e) =>
-                    setAgentForm({
-                      ...agentForm,
-                      modelPreferences: { ...agentForm.modelPreferences, ttsModelId: e.target.value },
-                    })
-                  }
-                  style={{ width: '100%', background: '#1e293b', border: '1px solid #334155', borderRadius: 8, color: '#f8fafc', padding: '10px 12px', fontSize: 13, boxSizing: 'border-box' }}
-                >
-                  {TASK_FALLBACK_CHAINS.tts.map((m) => (
-                    <option key={m} value={m}>{KNOWN_MODELS[m]?.displayName || m}</option>
-                  ))}
-                </select>
-                <span style={{ fontSize: 11, color: '#64748b', marginTop: 4, display: 'block' }}>
-                  {KNOWN_MODELS[agentForm.modelPreferences.ttsModelId || 'gemini-3.8-flash-lite-tts']?.description}
-                </span>
-              </div>
-
-              {/* Modelo STT */}
-              <div>
-                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#cbd5e1', marginBottom: 4 }}>
-                  Modelo STT (Transcrição de Áudio):
-                </label>
-                <select
-                  value={agentForm.modelPreferences.sttModelId || 'gemini-3.5-flash-lite'}
-                  onChange={(e) =>
-                    setAgentForm({
-                      ...agentForm,
-                      modelPreferences: { ...agentForm.modelPreferences, sttModelId: e.target.value },
-                    })
-                  }
-                  style={{ width: '100%', background: '#1e293b', border: '1px solid #334155', borderRadius: 8, color: '#f8fafc', padding: '10px 12px', fontSize: 13, boxSizing: 'border-box' }}
-                >
-                  {TASK_FALLBACK_CHAINS.stt.map((m) => (
-                    <option key={m} value={m}>{KNOWN_MODELS[m]?.displayName || m}</option>
-                  ))}
-                </select>
-                <span style={{ fontSize: 11, color: '#64748b', marginTop: 4, display: 'block' }}>
-                  {KNOWN_MODELS[agentForm.modelPreferences.sttModelId || 'gemini-3.5-flash-lite']?.description}
-                </span>
-              </div>
-
-              {/* Modelo Vision / Lens */}
-              <div>
-                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#cbd5e1', marginBottom: 4 }}>
-                  Modelo Vision (Análise de Tela):
-                </label>
-                <select
-                  value={agentForm.modelPreferences.visionModelId || 'gemini-3.1-flash-lite'}
-                  onChange={(e) =>
-                    setAgentForm({
-                      ...agentForm,
-                      modelPreferences: { ...agentForm.modelPreferences, visionModelId: e.target.value },
-                    })
-                  }
-                  style={{ width: '100%', background: '#1e293b', border: '1px solid #334155', borderRadius: 8, color: '#f8fafc', padding: '10px 12px', fontSize: 13, boxSizing: 'border-box' }}
-                >
-                  {TASK_FALLBACK_CHAINS.vision.map((m) => (
-                    <option key={m} value={m}>{KNOWN_MODELS[m]?.displayName || m}</option>
-                  ))}
-                </select>
-                <span style={{ fontSize: 11, color: '#64748b', marginTop: 4, display: 'block' }}>
-                  {KNOWN_MODELS[agentForm.modelPreferences.visionModelId || 'gemini-3.1-flash-lite']?.description}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* 9. CRIAR NOVO AGENTE / SALVAR / CRIAR CÓPIA */}
-          <div style={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 14, padding: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, boxShadow: '0 4px 16px rgba(0,0,0,0.3)' }}>
-            <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-              {isCustomAgent ? (
+              {isCustomAgent && (
                 <>
                   <button
                     onClick={handleSaveCustomAgentChanges}
-                    style={{
-                      background: '#10b981',
-                      color: '#ffffff',
-                      border: 'none',
-                      borderRadius: 8,
-                      padding: '11px 20px',
-                      fontSize: 13,
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 6,
-                    }}
+                    style={{ background: '#10b981', color: '#ffffff', border: 'none', borderRadius: 8, padding: '11px 20px', fontSize: 13, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
                   >
                     <Save size={16} />
-                    <span>Salvar Alterações do Agente</span>
+                    <span>Salvar Alterações</span>
                   </button>
 
                   <button
                     onClick={() => handleDeleteCustomAgent(agentForm.metadata.id)}
-                    style={{
-                      background: 'rgba(239, 68, 68, 0.15)',
-                      border: '1px solid rgba(239, 68, 68, 0.4)',
-                      color: '#f87171',
-                      borderRadius: 8,
-                      padding: '11px 16px',
-                      fontSize: 13,
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 6,
-                    }}
+                    style={{ background: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.4)', color: '#f87171', borderRadius: 8, padding: '11px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
                   >
                     <Trash2 size={16} />
                     <span>Excluir Agente</span>
                   </button>
                 </>
-              ) : (
-                <div style={{ fontSize: 12, color: '#94a3b8' }}>
-                  ℹ️ Este é um agente de fábrica protegido. Suas alterações podem ser salvas como uma nova persona personalizada.
-                </div>
               )}
             </div>
 
-            {/* BOTÃO CLARAMENTE DESTACADO: CRIAR NOVO AGENTE */}
             <button
               onClick={handleCreateNewAgentFromCurrent}
-              style={{
-                background: 'linear-gradient(135deg, #3b82f6, #6366f1)',
-                color: '#ffffff',
-                border: 'none',
-                borderRadius: 8,
-                padding: '12px 24px',
-                fontSize: 13,
-                fontWeight: 700,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                boxShadow: '0 4px 14px rgba(59, 130, 246, 0.4)',
-              }}
+              style={{ background: 'linear-gradient(135deg, #3b82f6, #6366f1)', color: '#ffffff', border: 'none', borderRadius: 8, padding: '12px 24px', fontSize: 13, fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}
             >
               <Plus size={18} />
-              <span>Criar Novo Agente com Estes Parâmetros</span>
+              <span>Criar Novo Agente</span>
             </button>
           </div>
         </div>
       )}
 
       {/* ========================================================================= */}
-      {/* ABA 3: ATALHOS DE TECLADO */}
+      {/* ABA 3: ATALHOS DE TECLADO EDITÁVEIS */}
       {/* ========================================================================= */}
       {activeTab === 'shortcuts' && (
         <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 14, padding: 24 }}>
-          <h2 style={{ fontSize: 16, fontWeight: 600, margin: '0 0 16px', color: '#f8fafc', display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Keyboard size={18} color="#38bdf8" />
-            <span>Atalhos de Teclado Disponíveis</span>
-          </h2>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+            <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0, color: '#f8fafc', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Keyboard size={18} color="#38bdf8" />
+              <span>Atalhos de Teclado Editáveis</span>
+            </h2>
+
+            <button
+              onClick={handleResetShortcuts}
+              style={{
+                background: 'rgba(255,255,255,0.06)',
+                border: '1px solid #334155',
+                color: '#cbd5e1',
+                borderRadius: 8,
+                padding: '6px 12px',
+                fontSize: 12,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+              }}
+            >
+              <RotateCcw size={14} />
+              <span>Restaurar Padrões</span>
+            </button>
+          </div>
+
+          <p style={{ fontSize: 13, color: '#94a3b8', margin: '0 0 20px', lineHeight: 1.5 }}>
+            Clique no botão <strong>"Gravando..."</strong> de qualquer ação e pressione a nova combinação de teclas desejada no teclado.
+          </p>
+
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {[
-              { key: 'Ctrl + B', desc: 'Ler texto selecionado imediatamente (TTS na página ativa)' },
-              { key: 'Pause / Break', desc: 'Pausar ou retomar a reprodução de áudio' },
-              { key: 'Ctrl + Shift + Espaço', desc: 'Iniciar ou concluir ditado por voz (STT no campo focado)' },
-              { key: 'Ctrl + Shift + L', desc: 'Ativar seleção retangular Gemini Lens para inspeção visual' },
-              { key: 'Alt + Shift + S', desc: 'Atalho global de navegador para ler seleção' },
-              { key: 'Alt + Shift + D', desc: 'Atalho global para iniciar transcrição' },
-              { key: 'Alt + Shift + H', desc: 'Atalho global para abrir ou fechar o HUD flutuante' },
-            ].map((sc) => (
-              <div key={sc.key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', background: '#1e293b', borderRadius: 8 }}>
-                <span style={{ fontSize: 13, color: '#f8fafc' }}>{sc.desc}</span>
-                <kbd style={{ background: '#0f172a', border: '1px solid #334155', padding: '5px 10px', borderRadius: 6, fontFamily: 'monospace', fontSize: 12, color: '#38bdf8', fontWeight: 600 }}>
-                  {sc.key}
-                </kbd>
-              </div>
-            ))}
+              { id: 'readSelection', desc: 'Ler texto selecionado imediatamente (TTS)', defaultVal: 'Ctrl+B' },
+              { id: 'togglePause', desc: 'Pausar ou retomar a reprodução de áudio', defaultVal: 'Pause' },
+              { id: 'startDictation', desc: 'Iniciar ou concluir ditado por voz (STT)', defaultVal: 'Ctrl+Shift+Space' },
+              { id: 'lensSelection', desc: 'Ativar seleção Gemini Lens (Visão da Tela)', defaultVal: 'Ctrl+Shift+L' },
+              { id: 'toggleHud', desc: 'Abrir ou fechar o HUD flutuante', defaultVal: 'Alt+Shift+H' },
+            ].map((sc) => {
+              const currentVal = (currentShortcuts as Record<string, string>)[sc.id] || sc.defaultVal;
+              const isRecording = recordingAction === sc.id;
+
+              return (
+                <div key={sc.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', background: '#1e293b', border: isRecording ? '1px solid #38bdf8' : '1px solid #334155', borderRadius: 10 }}>
+                  <div>
+                    <span style={{ fontSize: 13, color: '#f8fafc', fontWeight: 500, display: 'block' }}>{sc.desc}</span>
+                    <span style={{ fontSize: 11, color: '#64748b' }}>Ação de atalho global da extensão</span>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <kbd style={{ background: isRecording ? 'rgba(56, 189, 248, 0.2)' : '#0f172a', border: isRecording ? '1px solid #38bdf8' : '1px solid #334155', padding: '6px 12px', borderRadius: 8, fontFamily: 'monospace', fontSize: 12, color: isRecording ? '#38bdf8' : '#e2e8f0', fontWeight: 600 }}>
+                      {isRecording ? 'Pressione as teclas...' : formatShortcutDisplay(currentVal)}
+                    </kbd>
+
+                    <button
+                      onClick={() => setRecordingAction(isRecording ? null : sc.id)}
+                      style={{
+                        background: isRecording ? '#ef4444' : '#3b82f6',
+                        color: '#ffffff',
+                        border: 'none',
+                        borderRadius: 8,
+                        padding: '7px 14px',
+                        fontSize: 12,
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {isRecording ? 'Cancelar' : 'Alterar'}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
 
       {/* ========================================================================= */}
-      {/* ABA 4: HISTÓRICO & LOGS */}
+      {/* ABA 4: HISTÓRICO & LOGS DE ATIVIDADE */}
       {/* ========================================================================= */}
       {activeTab === 'history' && (
         <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 14, padding: 24 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
             <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0, color: '#f8fafc', display: 'flex', alignItems: 'center', gap: 8 }}>
               <History size={18} color="#38bdf8" />
-              <span>Registros e Histórico de Atividades</span>
+              <span>Registros e Histórico de Atividades em Tempo Real</span>
             </h2>
             {storageState.history.recentItems.length > 0 && (
               <button
                 onClick={async () => {
                   await chromeStorage.setPartial('history', { recentItems: [] });
                   setStorageState({ ...storageState, history: { ...storageState.history, recentItems: [] } });
-                  notifySaved('Histórico limpo.');
+                  notifySaved('Histórico de registros limpo.');
                 }}
                 style={{ background: 'transparent', border: '1px solid #334155', color: '#94a3b8', borderRadius: 6, padding: '6px 12px', fontSize: 12, cursor: 'pointer' }}
               >
@@ -1277,27 +903,54 @@ export const OptionsApp: React.FC = () => {
           </div>
 
           {storageState.history.recentItems.length === 0 ? (
-            <p style={{ fontSize: 13, color: '#64748b' }}>Nenhuma atividade registrada ainda nesta sessão.</p>
+            <p style={{ fontSize: 13, color: '#64748b' }}>Nenhum log registrado ainda nesta sessão. Realize chamadas de TTS, STT ou Lens para acompanhar os eventos.</p>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 400, overflowY: 'auto' }}>
-              {storageState.history.recentItems.map((item) => (
-                <div key={item.id} style={{ padding: '10px 14px', background: '#1e293b', borderRadius: 8, fontSize: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ fontWeight: 700, color: item.type === 'tts' ? '#38bdf8' : item.type === 'stt' ? '#f87171' : '#a855f7' }}>
-                      [{item.type.toUpperCase()}]
-                    </span>
-                    <span style={{ color: '#e2e8f0' }}>{item.previewText}</span>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 450, overflowY: 'auto' }}>
+              {storageState.history.recentItems.map((item: HistoryItem) => {
+                const isErr = item.status === 'error' || item.previewText.startsWith('❌');
+                return (
+                  <div
+                    key={item.id}
+                    style={{
+                      padding: '12px 16px',
+                      background: isErr ? 'rgba(239, 68, 68, 0.08)' : '#1e293b',
+                      border: isErr ? '1px solid rgba(239, 68, 68, 0.3)' : '1px solid #334155',
+                      borderRadius: 10,
+                      fontSize: 12,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 4,
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ fontWeight: 700, padding: '2px 6px', borderRadius: 4, fontSize: 10, background: item.type === 'tts' ? 'rgba(56,189,248,0.2)' : item.type === 'stt' ? 'rgba(248,113,113,0.2)' : 'rgba(168,85,247,0.2)', color: item.type === 'tts' ? '#38bdf8' : item.type === 'stt' ? '#f87171' : '#c084fc' }}>
+                          {item.type.toUpperCase()}
+                        </span>
+                        <span style={{ color: isErr ? '#f87171' : '#f8fafc', fontWeight: isErr ? 600 : 400 }}>
+                          {item.previewText}
+                        </span>
+                      </div>
+                      <span style={{ color: '#64748b', fontFamily: 'monospace', fontSize: 11 }}>
+                        {new Date(item.timestamp).toLocaleTimeString()}
+                      </span>
+                    </div>
+
+                    {item.errorDetails && (
+                      <div style={{ marginTop: 4, padding: '6px 10px', background: 'rgba(0,0,0,0.3)', borderRadius: 6, color: '#fca5a5', fontFamily: 'monospace', fontSize: 11, wordBreak: 'break-word' }}>
+                        {item.errorDetails}
+                      </div>
+                    )}
                   </div>
-                  <span style={{ color: '#64748b', fontFamily: 'monospace', fontSize: 11 }}>{new Date(item.timestamp).toLocaleTimeString()}</span>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
       )}
 
       {/* ========================================================================= */}
-      {/* ABA 5: CHATGPT (ÚLTIMA ABA) */}
+      {/* ABA 5: CHATGPT */}
       {/* ========================================================================= */}
       {activeTab === 'chatgpt' && (
         <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 14, padding: 24 }}>
@@ -1321,37 +974,10 @@ export const OptionsApp: React.FC = () => {
                 Como usar na interface web do ChatGPT:
               </h4>
               <ul style={{ fontSize: 12, color: '#cbd5e1', lineHeight: 1.6, paddingLeft: 18, margin: 0 }}>
-                <li><strong>Ditado Rápido:</strong> Clique na caixa de mensagem do ChatGPT e pressione <code>Ctrl + Shift + Espaço</code>. Fale sua pergunta e o texto será transcrito e formatado pelo agente ativo.</li>
-                <li><strong>Leitura de Respostas:</strong> Selecione qualquer resposta longa gerada pelo ChatGPT e pressione <code>Ctrl + B</code>. A narração começará imediatamente com a voz e equalização da persona selecionada.</li>
-                <li><strong>Pausar Leitura:</strong> Pressione a tecla <code>Pause / Break</code> a qualquer momento.</li>
+                <li><strong>Ditado Rápido:</strong> Clique na caixa de mensagem do ChatGPT e pressione seu atalho de ditado (padrão: <code>Ctrl + Shift + Espaço</code>). Fale sua pergunta e o texto será transcrito pelo agente ativo.</li>
+                <li><strong>Leitura de Respostas:</strong> Selecione qualquer resposta longa gerada pelo ChatGPT e pressione seu atalho de leitura (padrão: <code>Ctrl + B</code>). A narração começará imediatamente.</li>
+                <li><strong>Seleção Gemini Lens:</strong> Pressione <code>Ctrl + Shift + L</code> ou <code>Ctrl + Shift + Arrastar</code> em uma área para extrair e narrar o texto selecionado.</li>
               </ul>
-            </div>
-
-            <div style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 10, padding: 16 }}>
-              <h4 style={{ fontSize: 13, fontWeight: 600, color: '#34d399', margin: '0 0 6px' }}>
-                Sugestão de Persona Recomendada:
-              </h4>
-              <p style={{ fontSize: 12, color: '#94a3b8', margin: '0 0 10px', lineHeight: 1.5 }}>
-                Para redação e prompts avançados, ative o agente <strong>Revisor Gramatical & Ditado</strong> ou <strong>Assistente de Código & Dev</strong>.
-              </p>
-              <button
-                onClick={() => {
-                  handleSelectAgent('editor');
-                  setActiveTab('agents');
-                }}
-                style={{
-                  background: 'rgba(59, 130, 246, 0.15)',
-                  border: '1px solid #3b82f6',
-                  color: '#60a5fa',
-                  borderRadius: 6,
-                  padding: '6px 12px',
-                  fontSize: 12,
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                }}
-              >
-                Ativar Agente Revisor Gramatical
-              </button>
             </div>
           </div>
         </div>

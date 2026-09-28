@@ -47,6 +47,8 @@ export interface UiPreferencesSchema {
     toggleHud?: string;
     readSelection?: string;
     startDictation?: string;
+    togglePause?: string;
+    lensSelection?: string;
   };
 }
 
@@ -57,6 +59,8 @@ export interface HistoryItemSchema {
   agentId: string;
   previewText: string;
   durationMs?: number;
+  status?: 'success' | 'error';
+  errorDetails?: string;
 }
 
 export type HistoryItem = HistoryItemSchema;

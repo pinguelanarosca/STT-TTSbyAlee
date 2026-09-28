@@ -4,7 +4,7 @@
  * 
  * Cliente Direct REST para a API Gemini (Google AI Studio) na Extensão Chrome.
  * Utiliza fetch nativo com Whitelist Estrita, Fallback Imediato (Zero-Retry)
- * e Timeouts reais de até 15s por modelo com AbortController.
+ * e Timeouts ajustados de 25s por modelo com AbortController.
  */
 
 import { TtsSynthesisRequest, SttTranscriptionRequest } from '@shared/types/gemini';
@@ -19,14 +19,12 @@ import {
 import { base64ToUint8Array, pcmToWav, uint8ArrayToBase64 } from '@shared/utils/pcmWav';
 
 const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
-const MAX_PER_MODEL_TIMEOUT_MS = 15000; // 15 segundos máximo por modelo
+const MAX_PER_MODEL_TIMEOUT_MS = 25000; // 25 segundos por modelo
 const MAX_BASE64_AUDIO_LENGTH = 15 * 1024 * 1024; // 15MB limite de segurança
 
 export class GeminiDirectClient {
   /**
    * Sintetiza fala com a cadeia estrita de fallback TTS (Zero-Retry).
-   * Ordem: gemini-3.8-flash-lite-tts -> gemini-3.8-flash-tts -> gemini-3.1-flash-tts-preview -> gemini-2.5-flash-preview-tts
-   * Cada tentativa possui timeout rígido de 15s e suporte a cancelamento.
    */
   public async synthesizeSpeech(
     request: TtsSynthesisRequest,
@@ -49,7 +47,7 @@ export class GeminiDirectClient {
 
         const controller = new AbortController();
         const timeoutId = setTimeout(() => {
-          controller.abort(new Error(`Timeout de 15s excedido no modelo ${modelId}.`));
+          controller.abort(new Error(`Timeout de 25s excedido no modelo ${modelId}.`));
         }, MAX_PER_MODEL_TIMEOUT_MS);
 
         const onParentAbort = () => controller.abort(parentSignal?.reason);
@@ -60,7 +58,6 @@ export class GeminiDirectClient {
         try {
           const endpoint = `${GEMINI_BASE_URL}/models/${modelId}:generateContent?key=${apiKey}`;
 
-          // Formato REST oficial Gemini para TTS com speech_metadata
           const payload = {
             contents: [
               {
@@ -121,10 +118,8 @@ export class GeminiDirectClient {
           const rawBytes = base64ToUint8Array(rawBase64);
           let finalBase64 = rawBase64;
 
-          // Se o áudio retornado já contiver cabeçalho RIFF WAV, preserva diretamente sem reprocessamento pesado
           const isRiffWav = rawBytes.length > 4 && rawBytes[0] === 0x52 && rawBytes[1] === 0x49 && rawBytes[2] === 0x46 && rawBytes[3] === 0x46;
           if (!isRiffWav) {
-            // Se for PCM Linear puro sem container RIFF, empacota com cabeçalho WAV canônico 24kHz
             const cleanWav = pcmToWav(rawBytes, 24000, 1, 16);
             finalBase64 = uint8ArrayToBase64(cleanWav);
           }
@@ -152,7 +147,7 @@ export class GeminiDirectClient {
   }
 
   /**
-   * Transcreve áudio gravado via protocolo STT Unary (gemini-3.5-flash-lite -> gemini-3.1-flash-lite) com Zero-Retry Fallback.
+   * Transcreve áudio gravado via protocolo STT Unary.
    */
   public async transcribeAudio(
     request: SttTranscriptionRequest,
@@ -167,7 +162,6 @@ export class GeminiDirectClient {
       ? `Transcreva o seguinte áudio respeitando estritamente esta instrução: ${request.formattingInstruction}`
       : 'Transcreva o áudio com pontuação e ortografia correta, sem adicionar introduções ou conclusões.';
 
-    // Normaliza estritamente o mimeType removendo parâmetros como ;codecs=opus que causam HTTP 400
     const rawMime = request.mimeType || 'audio/webm';
     const normalizedMime = rawMime.split(';')[0].trim() || 'audio/webm';
 
@@ -183,7 +177,7 @@ export class GeminiDirectClient {
 
         const controller = new AbortController();
         const timeoutId = setTimeout(() => {
-          controller.abort(new Error(`Timeout de 15s excedido no modelo ${modelId}.`));
+          controller.abort(new Error(`Timeout de 25s excedido no modelo ${modelId}.`));
         }, MAX_PER_MODEL_TIMEOUT_MS);
 
         try {
@@ -240,7 +234,7 @@ export class GeminiDirectClient {
   }
 
   /**
-   * Inspeciona conteúdo visual com a whitelist Vision/Geral (gemini-3.5-flash-lite -> gemini-3.1-flash-lite).
+   * Inspeciona conteúdo visual com a whitelist Vision/Geral.
    */
   public async inspectVisionContext(
     imageBase64: string,
@@ -260,7 +254,7 @@ export class GeminiDirectClient {
 
         const controller = new AbortController();
         const timeoutId = setTimeout(() => {
-          controller.abort(new Error(`Timeout de 15s excedido no modelo ${targetModel}.`));
+          controller.abort(new Error(`Timeout de 25s excedido no modelo ${targetModel}.`));
         }, MAX_PER_MODEL_TIMEOUT_MS);
 
         try {
@@ -278,7 +272,7 @@ export class GeminiDirectClient {
                     },
                   },
                   {
-                    text: instruction || 'Analise a imagem da tela e descreva detalhadamente os elementos e textos visíveis.',
+                    text: instruction || 'Extraia e transcreva com exatidão todo o texto visível nesta área selecionada da página. Retorne unicamente o texto extraído, limpo, sem introduções ou observações, pronto para ser lido.',
                   },
                 ],
               },
@@ -311,9 +305,6 @@ export class GeminiDirectClient {
     return result;
   }
 
-  /**
-   * Testa a validade da chave de API utilizando a cadeia Auth (gemini-3.1-flash-lite -> gemini-3.5-flash-lite).
-   */
   public async testApiKey(apiKey: string): Promise<boolean> {
     try {
       await executeWithZeroRetryFallback(
@@ -340,9 +331,6 @@ export class GeminiDirectClient {
     }
   }
 
-  /**
-   * Realiza descoberta de modelos na API, filtrando estritamente para a whitelist permitida.
-   */
   public async discoverAvailableModels(apiKey: string): Promise<DiscoveredModelInfo[]> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 15000);

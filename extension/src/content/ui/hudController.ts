@@ -20,6 +20,7 @@ export class HudController {
   public onStopClick?: () => void;
   public onCloseClick?: () => void;
   public onRecordClick?: () => void;
+  public onLensClick?: () => void;
   public onVolumeChange?: (vol: number) => void;
   public onSpeedChange?: (speed: number) => void;
 
@@ -64,8 +65,11 @@ export class HudController {
           <button class="ext-btn-primary" id="ext-btn-play">
             <span id="ext-play-label">▶ Ouvir</span>
           </button>
-          <button class="ext-btn-secondary" id="ext-btn-mic">
-            <span>🎙 Ditar (Ctrl+Shift+Espaço)</span>
+          <button class="ext-btn-secondary" id="ext-btn-mic" title="Ditar voz">
+            <span>🎙 Ditar</span>
+          </button>
+          <button class="ext-btn-secondary" id="ext-btn-lens" title="Seleção Gemini Lens (Visão)">
+            <span>👁 Lens</span>
           </button>
           <button class="ext-btn-secondary" id="ext-btn-stop" title="Parar reprodução">■</button>
         </div>
@@ -95,6 +99,7 @@ export class HudController {
     const closeBtn = wrapper.querySelector('#ext-btn-close');
     const minBtn = wrapper.querySelector('#ext-btn-min');
     const micBtn = wrapper.querySelector('#ext-btn-mic');
+    const lensBtn = wrapper.querySelector('#ext-btn-lens');
     const stopBtn = wrapper.querySelector('#ext-btn-stop');
 
     closeBtn?.addEventListener('click', () => {
@@ -106,6 +111,7 @@ export class HudController {
 
     this.playPauseBtn?.addEventListener('click', () => this.onPlayPauseClick?.());
     micBtn?.addEventListener('click', () => this.onRecordClick?.());
+    lensBtn?.addEventListener('click', () => this.onLensClick?.());
     stopBtn?.addEventListener('click', () => this.onStopClick?.());
 
     this.volumeSlider?.addEventListener('input', (e) => {

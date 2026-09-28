@@ -40,9 +40,9 @@ export const DEFAULT_AUDIO_SETTINGS: AudioSettingsSchema = {
 
 export const DEFAULT_MODELS_SETTINGS: ModelsSettingsSchema = {
   ttsModelId: getFallbackModelForTask('tts'),      // gemini-3.8-flash-lite-tts
-  sttModelId: getFallbackModelForTask('stt'),      // gemini-3.5-transcribe
-  visionModelId: getFallbackModelForTask('vision'), // gemini-3.1-flash-lite
-  generalModelId: getFallbackModelForTask('general'), // gemini-3.1-flash-lite
+  sttModelId: getFallbackModelForTask('stt'),      // gemini-3.5-flash-lite
+  visionModelId: getFallbackModelForTask('vision'), // gemini-3.5-flash-lite
+  generalModelId: getFallbackModelForTask('general'), // gemini-3.5-flash-lite
   discoveredModels: [],
   discoveryCacheTimestamp: undefined,
 };
@@ -53,8 +53,10 @@ export const DEFAULT_UI_PREFERENCES: UiPreferencesSchema = {
   autoInject: true,
   shortcuts: {
     toggleHud: 'Alt+Shift+H',
-    readSelection: 'Alt+Shift+S',
-    startDictation: 'Alt+Shift+D',
+    readSelection: 'Ctrl+B',
+    startDictation: 'Ctrl+Shift+Space',
+    togglePause: 'Pause',
+    lensSelection: 'Ctrl+Shift+L',
   },
 };
 
@@ -113,7 +115,7 @@ export function migrateLegacyStorage(raw: Record<string, unknown>): AppStorageSc
 
   // Migração do namespace models
   if (raw.modelSettings && typeof raw.modelSettings === 'object') {
-    state.models = { ...state.models, ...(raw.modelSettings as Partial<ModelsSettingsSchema>) };
+    state.models = { ...state.models, ...(raw.models as Partial<ModelsSettingsSchema>) };
   } else if (raw.models && typeof raw.models === 'object') {
     state.models = { ...state.models, ...(raw.models as Partial<ModelsSettingsSchema>) };
   }
@@ -123,6 +125,11 @@ export function migrateLegacyStorage(raw: Record<string, unknown>): AppStorageSc
     state.ui = { ...state.ui, ...(raw.uiPreferences as Partial<UiPreferencesSchema>) };
   } else if (raw.ui && typeof raw.ui === 'object') {
     state.ui = { ...state.ui, ...(raw.ui as Partial<UiPreferencesSchema>) };
+  }
+
+  // Migração do namespace history
+  if (raw.history && typeof raw.history === 'object') {
+    state.history = { ...state.history, ...(raw.history as Partial<HistorySettingsSchema>) };
   }
 
   return state;
