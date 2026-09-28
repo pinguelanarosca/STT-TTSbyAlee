@@ -17,9 +17,10 @@ import {
   STT_UNARY_MODELS_WHITELIST,
 } from '@shared/constants/modelsCatalog';
 import { base64ToUint8Array, pcmToWav, uint8ArrayToBase64 } from '@shared/utils/pcmWav';
+import { logDiagnostic } from './diagnosticLogger';
 
 const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
-const MAX_PER_MODEL_TIMEOUT_MS = 25000; // 25 segundos por modelo
+const MAX_PER_MODEL_TIMEOUT_MS = 15000; // 15 segundos por modelo
 const MAX_BASE64_AUDIO_LENGTH = 15 * 1024 * 1024; // 15MB limite de segurança
 
 export class GeminiDirectClient {
@@ -43,11 +44,18 @@ export class GeminiDirectClient {
           throw new Error('Operação TTS cancelada pelo usuário.');
         }
 
-        console.log(`[TTS Client] Tentando síntese com o modelo: ${modelId}`);
+        const startTime = Date.now();
+        await logDiagnostic({
+          level: 'info',
+          source: 'TTS',
+          operation: 'MODEL_ATTEMPT',
+          message: `Tentando modelo ${modelId}`,
+          modelId,
+        });
 
         const controller = new AbortController();
         const timeoutId = setTimeout(() => {
-          controller.abort(new Error(`Timeout de 25s excedido no modelo ${modelId}.`));
+          controller.abort(new Error(`Timeout de 15s excedido no modelo ${modelId}.`));
         }, MAX_PER_MODEL_TIMEOUT_MS);
 
         const onParentAbort = () => controller.abort(parentSignal?.reason);
@@ -91,9 +99,20 @@ export class GeminiDirectClient {
             signal: controller.signal,
           });
 
+          const durationMs = Date.now() - startTime;
+
           if (!response.ok) {
             const errorText = await response.text();
-            console.error(`[TTS Client] Falha HTTP (${response.status}) no modelo ${modelId}:`, errorText);
+            await logDiagnostic({
+              level: 'error',
+              source: 'TTS',
+              operation: 'MODEL_ERROR',
+              modelId,
+              httpStatus: response.status,
+              durationMs,
+              message: `Falha HTTP (${response.status}) no modelo ${modelId}: ${errorText}`,
+              errorDetails: errorText,
+            });
             throw new Error(`Falha HTTP (${response.status}) no modelo ${modelId}: ${errorText}`);
           }
 
@@ -101,8 +120,16 @@ export class GeminiDirectClient {
           const candidatePart = data.candidates?.[0]?.content?.parts?.[0];
 
           if (!candidatePart?.inlineData?.data && !candidatePart?.inline_data?.data) {
-            console.warn(`[TTS Client] Modelo ${modelId} não retornou dados de áudio.`);
-            throw new Error(`Modelo ${modelId} não retornou dados de áudio na resposta.`);
+            const msg = `Modelo ${modelId} não retornou dados de áudio na resposta.`;
+            await logDiagnostic({
+              level: 'warn',
+              source: 'TTS',
+              operation: 'MODEL_ERROR',
+              modelId,
+              durationMs,
+              message: msg,
+            });
+            throw new Error(msg);
           }
 
           const rawBase64 = candidatePart.inlineData?.data || candidatePart.inline_data?.data;
@@ -124,13 +151,33 @@ export class GeminiDirectClient {
             finalBase64 = uint8ArrayToBase64(cleanWav);
           }
 
-          console.log(`[TTS Client] Síntese concluída com sucesso via modelo: ${modelId}`);
+          await logDiagnostic({
+            level: 'info',
+            source: 'TTS',
+            operation: 'MODEL_SUCCESS',
+            message: `Modelo ${modelId} respondeu áudio com sucesso`,
+            modelId,
+            durationMs,
+          });
 
           return {
             audioBase64: finalBase64,
             mimeType: 'audio/wav',
             sampleRate: 24000,
           };
+        } catch (err: any) {
+          const durationMs = Date.now() - startTime;
+          const errMsg = err instanceof Error ? err.message : String(err);
+          await logDiagnostic({
+            level: 'error',
+            source: 'TTS',
+            operation: 'MODEL_ERROR',
+            modelId,
+            durationMs,
+            message: errMsg,
+            errorDetails: err?.stack || String(err),
+          });
+          throw err;
         } finally {
           clearTimeout(timeoutId);
           if (parentSignal) {
@@ -173,11 +220,18 @@ export class GeminiDirectClient {
           throw new Error('Operação STT cancelada.');
         }
 
-        console.log(`[STT Client] Tentando transcrição com o modelo: ${modelId}, mimeType normalizado: ${normalizedMime}`);
+        const startTime = Date.now();
+        await logDiagnostic({
+          level: 'info',
+          source: 'STT',
+          operation: 'MODEL_ATTEMPT',
+          message: `Tentando modelo ${modelId} com mimeType: ${normalizedMime}`,
+          modelId,
+        });
 
         const controller = new AbortController();
         const timeoutId = setTimeout(() => {
-          controller.abort(new Error(`Timeout de 25s excedido no modelo ${modelId}.`));
+          controller.abort(new Error(`Timeout de 15s excedido no modelo ${modelId}.`));
         }, MAX_PER_MODEL_TIMEOUT_MS);
 
         try {
@@ -209,9 +263,20 @@ export class GeminiDirectClient {
             signal: controller.signal,
           });
 
+          const durationMs = Date.now() - startTime;
+
           if (!response.ok) {
             const errorText = await response.text();
-            console.error(`[STT Client] Falha HTTP (${response.status}) no modelo ${modelId}:`, errorText);
+            await logDiagnostic({
+              level: 'error',
+              source: 'STT',
+              operation: 'MODEL_ERROR',
+              modelId,
+              httpStatus: response.status,
+              durationMs,
+              message: `Falha HTTP (${response.status}) no modelo ${modelId}: ${errorText}`,
+              errorDetails: errorText,
+            });
             throw new Error(`Falha HTTP (${response.status}) no modelo ${modelId}: ${errorText}`);
           }
 
@@ -219,11 +284,41 @@ export class GeminiDirectClient {
           const textOutput = data.candidates?.[0]?.content?.parts?.[0]?.text;
 
           if (!textOutput) {
-            throw new Error(`Modelo ${modelId} não retornou transcrição.`);
+            const msg = `Modelo ${modelId} não retornou transcrição.`;
+            await logDiagnostic({
+              level: 'warn',
+              source: 'STT',
+              operation: 'MODEL_ERROR',
+              modelId,
+              durationMs,
+              message: msg,
+            });
+            throw new Error(msg);
           }
 
-          console.log(`[STT Client] Transcrição concluída com sucesso via modelo: ${modelId}`);
+          await logDiagnostic({
+            level: 'info',
+            source: 'STT',
+            operation: 'MODEL_SUCCESS',
+            message: `Modelo ${modelId} transcreveu com sucesso`,
+            modelId,
+            durationMs,
+          });
+
           return textOutput.trim();
+        } catch (err: any) {
+          const durationMs = Date.now() - startTime;
+          const errMsg = err instanceof Error ? err.message : String(err);
+          await logDiagnostic({
+            level: 'error',
+            source: 'STT',
+            operation: 'MODEL_ERROR',
+            modelId,
+            durationMs,
+            message: errMsg,
+            errorDetails: err?.stack || String(err),
+          });
+          throw err;
         } finally {
           clearTimeout(timeoutId);
         }
@@ -250,11 +345,18 @@ export class GeminiDirectClient {
       'vision',
       modelId,
       async (targetModel) => {
-        console.log(`[Vision Client] Tentando análise visual com o modelo: ${targetModel}`);
+        const startTime = Date.now();
+        await logDiagnostic({
+          level: 'info',
+          source: 'LENS',
+          operation: 'MODEL_ATTEMPT',
+          message: `Tentando análise com modelo ${targetModel}`,
+          modelId: targetModel,
+        });
 
         const controller = new AbortController();
         const timeoutId = setTimeout(() => {
-          controller.abort(new Error(`Timeout de 25s excedido no modelo ${targetModel}.`));
+          controller.abort(new Error(`Timeout de 15s excedido no modelo ${targetModel}.`));
         }, MAX_PER_MODEL_TIMEOUT_MS);
 
         try {
@@ -286,16 +388,49 @@ export class GeminiDirectClient {
             signal: controller.signal,
           });
 
+          const durationMs = Date.now() - startTime;
+
           if (!response.ok) {
             const errorText = await response.text();
-            console.error(`[Vision Client] Falha HTTP (${response.status}) no modelo ${targetModel}:`, errorText);
+            await logDiagnostic({
+              level: 'error',
+              source: 'LENS',
+              operation: 'MODEL_ERROR',
+              modelId: targetModel,
+              httpStatus: response.status,
+              durationMs,
+              message: `Falha HTTP (${response.status}) no modelo ${targetModel}: ${errorText}`,
+              errorDetails: errorText,
+            });
             throw new Error(`Falha HTTP (${response.status}) no modelo ${targetModel}: ${errorText}`);
           }
 
           const data = await response.json();
           const description = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-          console.log(`[Vision Client] Análise visual concluída com sucesso via modelo: ${targetModel}`);
+
+          await logDiagnostic({
+            level: 'info',
+            source: 'LENS',
+            operation: 'MODEL_SUCCESS',
+            message: `Modelo ${targetModel} analisou com sucesso`,
+            modelId: targetModel,
+            durationMs,
+          });
+
           return description.trim();
+        } catch (err: any) {
+          const durationMs = Date.now() - startTime;
+          const errMsg = err instanceof Error ? err.message : String(err);
+          await logDiagnostic({
+            level: 'error',
+            source: 'LENS',
+            operation: 'MODEL_ERROR',
+            modelId: targetModel,
+            durationMs,
+            message: errMsg,
+            errorDetails: err?.stack || String(err),
+          });
+          throw err;
         } finally {
           clearTimeout(timeoutId);
         }

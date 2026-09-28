@@ -13,6 +13,7 @@ import { getCanonicalAgent } from '@shared/constants/defaultAgents';
 import { chromeStorage } from '../services/storage/chromeStorageAdapter';
 import { geminiDirectClient } from '../services/geminiDirectClient';
 import { captureAndAnalyzeTab } from './tabCaptureHandler';
+import { logDiagnostic } from '../services/diagnosticLogger';
 
 let activeTtsAbortController: AbortController | null = null;
 
@@ -56,10 +57,8 @@ export async function handleExtensionMessage(
           return { success: false, error: 'Texto não informado para síntese.' };
         }
 
-        if (activeTtsAbortController) {
-          activeTtsAbortController.abort('Nova requisição iniciada.');
-        }
-
+        // REMOVIDO: Cancelamento automático de solicitações anteriores.
+        // A fila FIFO é mantida no ttsController no content script.
         const currentController = new AbortController();
         activeTtsAbortController = currentController;
 
@@ -67,6 +66,12 @@ export async function handleExtensionMessage(
         if (!apiSettings.apiKey) {
           const err = 'Chave de API Gemini não configurada. Abra as opções para configurar.';
           await addHistoryLog('tts', text.substring(0, 60), agentId, 'error', err);
+          await logDiagnostic({
+            level: 'error',
+            source: 'TTS',
+            operation: 'TTS_REQUEST',
+            message: err,
+          });
           return { success: false, error: err };
         }
 
@@ -79,9 +84,16 @@ export async function handleExtensionMessage(
         const ttsModelId = agent.modelPreferences.ttsModelId || modelsSettings.ttsModelId;
         const voice = voiceName || agent.voice.preferredVoice || audioSettings.preferredVoice;
 
-        console.log(`[TTS Router] Iniciando TTS para "${text.length > 30 ? text.substring(0, 30) + '...' : text}" com modelo ${ttsModelId}`);
+        await logDiagnostic({
+          level: 'info',
+          source: 'TTS',
+          operation: 'TTS_REQUEST_START',
+          message: `Iniciando síntese de ${text.length} caracteres via modelo ${ttsModelId}`,
+          modelId: ttsModelId,
+        });
 
         try {
+          const startTime = Date.now();
           const result = await geminiDirectClient.synthesizeSpeech(
             {
               text,
@@ -95,12 +107,28 @@ export async function handleExtensionMessage(
             currentController.signal
           );
 
+          const durationMs = Date.now() - startTime;
           await addHistoryLog('tts', text.length > 80 ? text.substring(0, 80) + '...' : text, agentId, 'success');
-          console.log(`[TTS Router] Síntese finalizada com sucesso via modelo: ${result.modelUsed}`);
+          await logDiagnostic({
+            level: 'info',
+            source: 'TTS',
+            operation: 'TTS_REQUEST_SUCCESS',
+            message: `Síntese concluída com sucesso via modelo ${result.modelUsed}`,
+            modelId: result.modelUsed,
+            durationMs,
+          });
+
           return { success: true, data: result };
         } catch (err: any) {
           const errMsg = err instanceof Error ? err.message : String(err);
           await addHistoryLog('tts', text.substring(0, 60), agentId, 'error', errMsg);
+          await logDiagnostic({
+            level: 'error',
+            source: 'TTS',
+            operation: 'TTS_REQUEST_ERROR',
+            message: `Falha na síntese TTS: ${errMsg}`,
+            errorDetails: err?.stack || String(err),
+          });
           throw err;
         } finally {
           if (activeTtsAbortController === currentController) {
@@ -111,9 +139,14 @@ export async function handleExtensionMessage(
 
       case 'TTS_STOP': {
         if (activeTtsAbortController) {
-          console.log('[TTS Router] Recebido TTS_STOP: abortando requisição ativa.');
           activeTtsAbortController.abort('Interrompido por TTS_STOP');
           activeTtsAbortController = null;
+          await logDiagnostic({
+            level: 'info',
+            source: 'TTS',
+            operation: 'TTS_STOP',
+            message: 'Síntese interrompida explicitamente pelo usuário.',
+          });
         }
         return { success: true };
       }
@@ -124,6 +157,12 @@ export async function handleExtensionMessage(
         if (!apiSettings.apiKey) {
           const err = 'Chave de API Gemini não configurada. Abra as opções para configurar.';
           await addHistoryLog('stt', 'Gravação de voz', agentId, 'error', err);
+          await logDiagnostic({
+            level: 'error',
+            source: 'STT',
+            operation: 'STT_REQUEST',
+            message: err,
+          });
           return { success: false, error: err };
         }
 
@@ -133,9 +172,16 @@ export async function handleExtensionMessage(
         const modelsSettings = await chromeStorage.get('models');
         const sttModelId = agent.modelPreferences.sttModelId || modelsSettings.sttModelId;
 
-        console.log(`[STT Router] Iniciando transcrição com ${sttModelId}, mimeType: ${mimeType}`);
+        await logDiagnostic({
+          level: 'info',
+          source: 'STT',
+          operation: 'STT_REQUEST_START',
+          message: `Iniciando transcrição de áudio com modelo ${sttModelId}, mimeType: ${mimeType}`,
+          modelId: sttModelId,
+        });
 
         try {
+          const startTime = Date.now();
           const transcribedText = await geminiDirectClient.transcribeAudio(
             {
               audioBase64,
@@ -146,7 +192,16 @@ export async function handleExtensionMessage(
             apiSettings.apiKey
           );
 
+          const durationMs = Date.now() - startTime;
           await addHistoryLog('stt', transcribedText.length > 80 ? transcribedText.substring(0, 80) + '...' : transcribedText, agentId, 'success');
+          await logDiagnostic({
+            level: 'info',
+            source: 'STT',
+            operation: 'STT_REQUEST_SUCCESS',
+            message: `Transcrição concluída com sucesso: "${transcribedText.substring(0, 50)}..."`,
+            modelId: sttModelId,
+            durationMs,
+          });
 
           if (sender.tab?.id) {
             chrome.tabs.sendMessage(sender.tab.id, {
@@ -163,6 +218,13 @@ export async function handleExtensionMessage(
         } catch (err: any) {
           const errMsg = err instanceof Error ? err.message : String(err);
           await addHistoryLog('stt', 'Ditado por voz', agentId, 'error', errMsg);
+          await logDiagnostic({
+            level: 'error',
+            source: 'STT',
+            operation: 'STT_REQUEST_ERROR',
+            message: `Falha na transcrição STT: ${errMsg}`,
+            errorDetails: err?.stack || String(err),
+          });
           throw err;
         }
       }
@@ -190,9 +252,16 @@ export async function handleExtensionMessage(
         if (!tabId) {
           return { success: false, error: 'Aba não identificada para captura visual.' };
         }
-        console.log(`[Lens Router] Iniciando captura visual para aba ${tabId}`);
+
+        await logDiagnostic({
+          level: 'info',
+          source: 'LENS',
+          operation: 'LENS_REQUEST_START',
+          message: `Iniciando captura e análise visual Lens para aba ${tabId}`,
+        });
 
         try {
+          const startTime = Date.now();
           const description = await captureAndAnalyzeTab(
             tabId,
             message.payload.instruction,
@@ -200,11 +269,27 @@ export async function handleExtensionMessage(
             message.payload.rect
           );
 
+          const durationMs = Date.now() - startTime;
           await addHistoryLog('vision', description.length > 80 ? description.substring(0, 80) + '...' : description, message.payload.agentId, 'success');
+          await logDiagnostic({
+            level: 'info',
+            source: 'LENS',
+            operation: 'LENS_REQUEST_SUCCESS',
+            message: `Análise Lens concluída com sucesso (${description.length} chars)`,
+            durationMs,
+          });
+
           return { success: true, data: description };
         } catch (err: any) {
           const errMsg = err instanceof Error ? err.message : String(err);
           await addHistoryLog('vision', 'Análise de Seleção de Tela', message.payload.agentId, 'error', errMsg);
+          await logDiagnostic({
+            level: 'error',
+            source: 'LENS',
+            operation: 'LENS_REQUEST_ERROR',
+            message: `Falha na análise Lens: ${errMsg}`,
+            errorDetails: err?.stack || String(err),
+          });
           throw err;
         }
       }

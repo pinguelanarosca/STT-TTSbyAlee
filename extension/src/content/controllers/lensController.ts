@@ -204,11 +204,25 @@ export class LensController {
     this.boxElement.style.height = `${height}px`;
   }
 
-  private submitSelection(rect: { x: number; y: number; width: number; height: number; devicePixelRatio: number }): void {
+  private submitSelection(
+    rect: { x: number; y: number; width: number; height: number; devicePixelRatio: number },
+    agentId: string = 'narrator'
+  ): void {
     this.cleanup();
     hud.show();
     hud.setStatus('loading', 'Analisando tela');
     hud.setTextPreview('Inspecionando a área selecionada com Gemini Vision...');
+
+    let isFinished = false;
+
+    // Timeout client-side global de 30s para garantir que nunca fique travado em "Analisando tela"
+    const globalTimeoutId = setTimeout(() => {
+      if (isFinished) return;
+      isFinished = true;
+      console.error('[Lens Controller] Timeout global de 30s excedido ao aguardar resposta do Lens.');
+      hud.setStatus('idle', 'Timeout Lens');
+      hud.setTextPreview('❌ Erro no Lens: Tempo limite de 30s excedido sem resposta.');
+    }, 30000);
 
     try {
       chrome.runtime.sendMessage(
@@ -217,9 +231,14 @@ export class LensController {
           payload: {
             instruction: 'Extraia e transcreva com exatidão todo o texto visível nesta área selecionada da página. Retorne unicamente o texto extraído, limpo, sem introduções ou observações, pronto para ser lido.',
             rect,
+            agentId,
           },
         },
         (response) => {
+          if (isFinished) return;
+          isFinished = true;
+          clearTimeout(globalTimeoutId);
+
           if (chrome.runtime.lastError) {
             const err = chrome.runtime.lastError.message || 'Erro de conexão com a extensão';
             console.error('[Lens Controller] Erro runtime:', err);
@@ -247,6 +266,9 @@ export class LensController {
         }
       );
     } catch (err: any) {
+      if (isFinished) return;
+      isFinished = true;
+      clearTimeout(globalTimeoutId);
       console.error('[Lens Controller] Exceção ao enviar Lens request:', err);
       hud.setStatus('idle', 'Erro Lens');
       hud.setTextPreview(`❌ Exceção no Lens: ${err?.message || String(err)}`);

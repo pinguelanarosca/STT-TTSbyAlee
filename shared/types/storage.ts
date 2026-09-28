@@ -71,6 +71,28 @@ export interface HistorySettingsSchema {
   recentItems: HistoryItemSchema[];
 }
 
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+export type LogSource = 'TTS' | 'STT' | 'LENS' | 'ROUTER' | 'API' | 'SHORTCUT' | 'SYSTEM';
+
+export interface TechnicalLogItem {
+  id: string;
+  timestamp: number;
+  level: LogLevel;
+  source: LogSource;
+  operation: string;
+  modelId?: string;
+  httpStatus?: number;
+  durationMs?: number;
+  message: string;
+  errorDetails?: string;
+}
+
+export interface TechnicalLogsSchema {
+  enabled: boolean;
+  maxEntries: number;
+  items: TechnicalLogItem[];
+}
+
 export interface AppStorageSchema {
   api: ApiSettingsSchema;
   agents: AgentsSettingsSchema;
@@ -78,6 +100,7 @@ export interface AppStorageSchema {
   models: ModelsSettingsSchema;
   ui: UiPreferencesSchema;
   history: HistorySettingsSchema;
+  logs: TechnicalLogsSchema;
 }
 
 export interface IStorageService {

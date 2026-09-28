@@ -39,7 +39,7 @@ import {
   Settings2,
   RotateCcw,
 } from 'lucide-react';
-import { AppStorageSchema, HistoryItem } from '@shared/types/storage';
+import { AppStorageSchema, HistoryItem, TechnicalLogItem, LogLevel, LogSource } from '@shared/types/storage';
 import { CanonicalAgent, GeminiVoiceName, AmbienceType } from '@shared/types/agent';
 import { DEFAULT_AGENTS } from '@shared/constants/defaultAgents';
 import { DEFAULT_UI_PREFERENCES } from '@shared/constants/defaultSettings';
@@ -67,8 +67,16 @@ export const OptionsApp: React.FC = () => {
   const [testResult, setTestResult] = useState<{ success?: boolean; message?: string } | null>(null);
   const [isTesting, setIsTesting] = useState(false);
 
+  // Comandos Globais do Chrome (chrome.commands)
+  const [globalCommands, setGlobalCommands] = useState<Array<{ name?: string; shortcut?: string; description?: string }>>([]);
+
   // Estado dos atalhos editáveis
   const [recordingAction, setRecordingAction] = useState<string | null>(null);
+
+  // Sub-aba de Histórico vs Logs Técnicos
+  const [historySubTab, setHistorySubTab] = useState<'history' | 'logs'>('logs');
+  const [logLevelFilter, setLogLevelFilter] = useState<string>('all');
+  const [logSourceFilter, setLogSourceFilter] = useState<string>('all');
 
   // Estado do editor unificado de agente
   const [selectedAgentId, setSelectedAgentId] = useState<string>('narrator');
@@ -103,13 +111,25 @@ export const OptionsApp: React.FC = () => {
       setIsCustomAgent(!found.metadata.isBuiltIn);
     });
 
-    // Inscreve para atualizações do histórico em tempo real
+    // Carrega comandos globais reais do chrome.commands.getAll()
+    if (typeof chrome !== 'undefined' && chrome.commands?.getAll) {
+      chrome.commands.getAll((cmds) => {
+        setGlobalCommands(cmds || []);
+      });
+    }
+
+    // Inscreve para atualizações do histórico e logs em tempo real
     const unsubscribeHistory = chromeStorage.subscribe('history', (newHistory) => {
       setStorageState((prev) => (prev ? { ...prev, history: newHistory } : null));
     });
 
+    const unsubscribeLogs = chromeStorage.subscribe('logs', (newLogs) => {
+      setStorageState((prev) => (prev ? { ...prev, logs: newLogs } : null));
+    });
+
     return () => {
       unsubscribeHistory();
+      unsubscribeLogs();
     };
   }, []);
 
@@ -801,149 +821,413 @@ export const OptionsApp: React.FC = () => {
       {/* ABA 3: ATALHOS DE TECLADO EDITÁVEIS */}
       {/* ========================================================================= */}
       {activeTab === 'shortcuts' && (
-        <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 14, padding: 24 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-            <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0, color: '#f8fafc', display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Keyboard size={18} color="#38bdf8" />
-              <span>Atalhos de Teclado Editáveis</span>
-            </h2>
-
-            <button
-              onClick={handleResetShortcuts}
-              style={{
-                background: 'rgba(255,255,255,0.06)',
-                border: '1px solid #334155',
-                color: '#cbd5e1',
-                borderRadius: 8,
-                padding: '6px 12px',
-                fontSize: 12,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-              }}
-            >
-              <RotateCcw size={14} />
-              <span>Restaurar Padrões</span>
-            </button>
-          </div>
-
-          <p style={{ fontSize: 13, color: '#94a3b8', margin: '0 0 20px', lineHeight: 1.5 }}>
-            Clique no botão <strong>"Gravando..."</strong> de qualquer ação e pressione a nova combinação de teclas desejada no teclado.
-          </p>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {[
-              { id: 'readSelection', desc: 'Ler texto selecionado imediatamente (TTS)', defaultVal: 'Ctrl+B' },
-              { id: 'togglePause', desc: 'Pausar ou retomar a reprodução de áudio', defaultVal: 'Pause' },
-              { id: 'startDictation', desc: 'Iniciar ou concluir ditado por voz (STT)', defaultVal: 'Ctrl+Shift+Space' },
-              { id: 'lensSelection', desc: 'Ativar seleção Gemini Lens (Visão da Tela)', defaultVal: 'Ctrl+Shift+L' },
-              { id: 'toggleHud', desc: 'Abrir ou fechar o HUD flutuante', defaultVal: 'Alt+Shift+H' },
-            ].map((sc) => {
-              const currentVal = (currentShortcuts as Record<string, string>)[sc.id] || sc.defaultVal;
-              const isRecording = recordingAction === sc.id;
-
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+          {/* Atalhos Internos / Content Script */}
+          <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 14, padding: 24 }}>
+            {(() => {
+              const currentShortcuts = storageState?.ui?.shortcuts || DEFAULT_UI_PREFERENCES.shortcuts;
               return (
-                <div key={sc.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', background: '#1e293b', border: isRecording ? '1px solid #38bdf8' : '1px solid #334155', borderRadius: 10 }}>
-                  <div>
-                    <span style={{ fontSize: 13, color: '#f8fafc', fontWeight: 500, display: 'block' }}>{sc.desc}</span>
-                    <span style={{ fontSize: 11, color: '#64748b' }}>Ação de atalho global da extensão</span>
-                  </div>
-
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <kbd style={{ background: isRecording ? 'rgba(56, 189, 248, 0.2)' : '#0f172a', border: isRecording ? '1px solid #38bdf8' : '1px solid #334155', padding: '6px 12px', borderRadius: 8, fontFamily: 'monospace', fontSize: 12, color: isRecording ? '#38bdf8' : '#e2e8f0', fontWeight: 600 }}>
-                      {isRecording ? 'Pressione as teclas...' : formatShortcutDisplay(currentVal)}
-                    </kbd>
+                <>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+                    <div>
+                      <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0, color: '#f8fafc', display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <Keyboard size={18} color="#38bdf8" />
+                        <span>Atalhos Internos da Página (Content Script - Editáveis)</span>
+                      </h2>
+                      <p style={{ fontSize: 12, color: '#94a3b8', margin: '4px 0 0' }}>
+                        Atalhos de teclado escutados diretamente na página web ativa via listener de eventos da página.
+                      </p>
+                    </div>
 
                     <button
-                      onClick={() => setRecordingAction(isRecording ? null : sc.id)}
+                      onClick={handleResetShortcuts}
                       style={{
-                        background: isRecording ? '#ef4444' : '#3b82f6',
-                        color: '#ffffff',
-                        border: 'none',
+                        background: 'rgba(255,255,255,0.06)',
+                        border: '1px solid #334155',
+                        color: '#cbd5e1',
                         borderRadius: 8,
-                        padding: '7px 14px',
+                        padding: '6px 12px',
                         fontSize: 12,
-                        fontWeight: 600,
                         cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
                       }}
                     >
-                      {isRecording ? 'Cancelar' : 'Alterar'}
+                      <RotateCcw size={14} />
+                      <span>Restaurar Padrões</span>
                     </button>
                   </div>
-                </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 16 }}>
+                    {[
+                      { id: 'readSelection', desc: 'Ler texto selecionado imediatamente (TTS)', defaultVal: 'Ctrl+B' },
+                      { id: 'togglePause', desc: 'Pausar ou retomar a reprodução de áudio', defaultVal: 'Pause' },
+                      { id: 'startDictation', desc: 'Iniciar ou concluir ditado por voz (STT)', defaultVal: 'Ctrl+Shift+Space' },
+                      { id: 'lensSelection', desc: 'Ativar seleção Gemini Lens (Visão da Tela)', defaultVal: 'Ctrl+Shift+L' },
+                      { id: 'toggleHud', desc: 'Abrir ou fechar o HUD flutuante', defaultVal: 'Alt+Shift+H' },
+                    ].map((sc) => {
+                      const currentVal = (currentShortcuts as Record<string, string>)[sc.id] || sc.defaultVal;
+                      const isRecording = recordingAction === sc.id;
+
+                      return (
+                        <div key={sc.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', background: '#1e293b', border: isRecording ? '1px solid #38bdf8' : '1px solid #334155', borderRadius: 10 }}>
+                          <div>
+                            <span style={{ fontSize: 13, color: '#f8fafc', fontWeight: 500, display: 'block' }}>{sc.desc}</span>
+                            <span style={{ fontSize: 11, color: '#64748b' }}>Ação de atalho interno do content script</span>
+                          </div>
+
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <kbd style={{ background: isRecording ? 'rgba(56, 189, 248, 0.2)' : '#0f172a', border: isRecording ? '1px solid #38bdf8' : '1px solid #334155', padding: '6px 12px', borderRadius: 8, fontFamily: 'monospace', fontSize: 12, color: isRecording ? '#38bdf8' : '#e2e8f0', fontWeight: 600 }}>
+                              {isRecording ? 'Pressione as teclas...' : formatShortcutDisplay(currentVal)}
+                            </kbd>
+
+                            <button
+                              onClick={() => setRecordingAction(isRecording ? null : sc.id)}
+                              style={{
+                                background: isRecording ? '#ef4444' : '#3b82f6',
+                                color: '#ffffff',
+                                border: 'none',
+                                borderRadius: 8,
+                                padding: '7px 14px',
+                                fontSize: 12,
+                                fontWeight: 600,
+                                cursor: 'pointer',
+                              }}
+                            >
+                              {isRecording ? 'Cancelar' : 'Alterar'}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
               );
-            })}
+            })()}
+          </div>
+
+          {/* Atalhos Globais Reais do Chrome (chrome.commands) */}
+          <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 14, padding: 24 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+              <div>
+                <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0, color: '#f8fafc', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Settings2 size={18} color="#c084fc" />
+                  <span>Atalhos Globais do Navegador (Chrome Commands)</span>
+                </h2>
+                <p style={{ fontSize: 12, color: '#94a3b8', margin: '4px 0 0' }}>
+                  Atalhos globais registrados no sistema do Chrome. O Chrome gerencia estes atalhos nativamente.
+                </p>
+              </div>
+
+              <button
+                onClick={() => {
+                  if (typeof chrome !== 'undefined' && chrome.tabs?.create) {
+                    chrome.tabs.create({ url: 'chrome://extensions/shortcuts' });
+                  } else {
+                    window.open('chrome://extensions/shortcuts', '_blank');
+                  }
+                }}
+                style={{
+                  background: 'linear-gradient(135deg, #a855f7, #6366f1)',
+                  color: '#ffffff',
+                  border: 'none',
+                  borderRadius: 8,
+                  padding: '8px 16px',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                }}
+              >
+                <ExternalLink size={14} />
+                <span>Gerenciar Atalhos Globais</span>
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {globalCommands.length === 0 ? (
+                <div style={{ padding: '12px 16px', background: '#1e293b', borderRadius: 8, fontSize: 12, color: '#94a3b8' }}>
+                  Carregando ou nenhum comando global configurado em manifest.json.
+                </div>
+              ) : (
+                globalCommands.map((cmd) => (
+                  <div key={cmd.name || 'cmd'} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', background: '#1e293b', border: '1px solid #334155', borderRadius: 8 }}>
+                    <div>
+                      <span style={{ fontSize: 13, color: '#f8fafc', fontWeight: 600 }}>{cmd.description || cmd.name}</span>
+                      <span style={{ fontSize: 11, color: '#64748b', display: 'block' }}>Comando nativo Chrome: {cmd.name}</span>
+                    </div>
+                    <kbd style={{ background: '#0f172a', border: '1px solid #475569', padding: '5px 10px', borderRadius: 6, fontFamily: 'monospace', fontSize: 12, color: '#38bdf8', fontWeight: 700 }}>
+                      {cmd.shortcut || 'Não definido (Defina em chrome://extensions/shortcuts)'}
+                    </kbd>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
         </div>
       )}
 
       {/* ========================================================================= */}
-      {/* ABA 4: HISTÓRICO & LOGS DE ATIVIDADE */}
+      {/* ABA 4: HISTÓRICO & LOGS TÉCNICOS */}
       {/* ========================================================================= */}
       {activeTab === 'history' && (
         <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 14, padding: 24 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-            <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0, color: '#f8fafc', display: 'flex', alignItems: 'center', gap: 8 }}>
-              <History size={18} color="#38bdf8" />
-              <span>Registros e Histórico de Atividades em Tempo Real</span>
-            </h2>
-            {storageState.history.recentItems.length > 0 && (
+          {/* Cabeçalho da Aba e Seleção de Sub-aba */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               <button
-                onClick={async () => {
-                  await chromeStorage.setPartial('history', { recentItems: [] });
-                  setStorageState({ ...storageState, history: { ...storageState.history, recentItems: [] } });
-                  notifySaved('Histórico de registros limpo.');
+                onClick={() => setHistorySubTab('logs')}
+                style={{
+                  background: historySubTab === 'logs' ? '#3b82f6' : '#1e293b',
+                  color: '#ffffff',
+                  border: '1px solid #334155',
+                  borderRadius: 8,
+                  padding: '8px 16px',
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
                 }}
-                style={{ background: 'transparent', border: '1px solid #334155', color: '#94a3b8', borderRadius: 6, padding: '6px 12px', fontSize: 12, cursor: 'pointer' }}
               >
-                Limpar Registros
+                <Sliders size={15} />
+                <span>Logs Técnicos ({storageState?.logs?.items?.length || 0})</span>
               </button>
-            )}
+
+              <button
+                onClick={() => setHistorySubTab('history')}
+                style={{
+                  background: historySubTab === 'history' ? '#3b82f6' : '#1e293b',
+                  color: '#ffffff',
+                  border: '1px solid #334155',
+                  borderRadius: 8,
+                  padding: '8px 16px',
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                }}
+              >
+                <History size={15} />
+                <span>Histórico de Atividades ({storageState?.history?.recentItems?.length || 0})</span>
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {historySubTab === 'logs' && (
+                <>
+                  <button
+                    onClick={() => {
+                      const items = storageState?.logs?.items || [];
+                      navigator.clipboard.writeText(JSON.stringify(items, null, 2));
+                      notifySaved('Logs copiados para a área de transferência!');
+                    }}
+                    style={{ background: '#1e293b', border: '1px solid #334155', color: '#38bdf8', borderRadius: 6, padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
+                  >
+                    <Copy size={14} />
+                    <span>Copiar Logs</span>
+                  </button>
+
+                  <button
+                    onClick={async () => {
+                      await chromeStorage.setPartial('logs', { items: [] });
+                      notifySaved('Logs técnicos limpos.');
+                    }}
+                    style={{ background: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.4)', color: '#f87171', borderRadius: 6, padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
+                  >
+                    <Trash2 size={14} />
+                    <span>Limpar Logs</span>
+                  </button>
+                </>
+              )}
+
+              {historySubTab === 'history' && (
+                <button
+                  onClick={async () => {
+                    await chromeStorage.setPartial('history', { recentItems: [] });
+                    notifySaved('Histórico de atividades limpo.');
+                  }}
+                  style={{ background: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.4)', color: '#f87171', borderRadius: 6, padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
+                >
+                  <Trash2 size={14} />
+                  <span>Limpar Histórico</span>
+                </button>
+              )}
+            </div>
           </div>
 
-          {storageState.history.recentItems.length === 0 ? (
-            <p style={{ fontSize: 13, color: '#64748b' }}>Nenhum log registrado ainda nesta sessão. Realize chamadas de TTS, STT ou Lens para acompanhar os eventos.</p>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 450, overflowY: 'auto' }}>
-              {storageState.history.recentItems.map((item: HistoryItem) => {
-                const isErr = item.status === 'error' || item.previewText.startsWith('❌');
-                return (
-                  <div
-                    key={item.id}
-                    style={{
-                      padding: '12px 16px',
-                      background: isErr ? 'rgba(239, 68, 68, 0.08)' : '#1e293b',
-                      border: isErr ? '1px solid rgba(239, 68, 68, 0.3)' : '1px solid #334155',
-                      borderRadius: 10,
-                      fontSize: 12,
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 4,
-                    }}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <span style={{ fontWeight: 700, padding: '2px 6px', borderRadius: 4, fontSize: 10, background: item.type === 'tts' ? 'rgba(56,189,248,0.2)' : item.type === 'stt' ? 'rgba(248,113,113,0.2)' : 'rgba(168,85,247,0.2)', color: item.type === 'tts' ? '#38bdf8' : item.type === 'stt' ? '#f87171' : '#c084fc' }}>
-                          {item.type.toUpperCase()}
-                        </span>
-                        <span style={{ color: isErr ? '#f87171' : '#f8fafc', fontWeight: isErr ? 600 : 400 }}>
-                          {item.previewText}
-                        </span>
-                      </div>
-                      <span style={{ color: '#64748b', fontFamily: 'monospace', fontSize: 11 }}>
-                        {new Date(item.timestamp).toLocaleTimeString()}
-                      </span>
-                    </div>
+          {/* SUB-ABA 1: LOGS TÉCNICOS */}
+          {historySubTab === 'logs' && (
+            <div>
+              {/* Filtros de Logs */}
+              <div style={{ display: 'flex', gap: 12, marginBottom: 16, background: '#1e293b', padding: '10px 14px', borderRadius: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 12, color: '#94a3b8', fontWeight: 600 }}>Filtrar Nível:</span>
+                <select
+                  value={logLevelFilter}
+                  onChange={(e) => setLogLevelFilter(e.target.value)}
+                  style={{ background: '#0f172a', border: '1px solid #334155', color: '#f8fafc', borderRadius: 6, padding: '4px 10px', fontSize: 12, outline: 'none' }}
+                >
+                  <option value="all">Todos os Níveis</option>
+                  <option value="info">Info</option>
+                  <option value="warn">Warn</option>
+                  <option value="error">Error</option>
+                  <option value="debug">Debug</option>
+                </select>
 
-                    {item.errorDetails && (
-                      <div style={{ marginTop: 4, padding: '6px 10px', background: 'rgba(0,0,0,0.3)', borderRadius: 6, color: '#fca5a5', fontFamily: 'monospace', fontSize: 11, wordBreak: 'break-word' }}>
-                        {item.errorDetails}
-                      </div>
-                    )}
+                <span style={{ fontSize: 12, color: '#94a3b8', fontWeight: 600, marginLeft: 8 }}>Origem:</span>
+                <select
+                  value={logSourceFilter}
+                  onChange={(e) => setLogSourceFilter(e.target.value)}
+                  style={{ background: '#0f172a', border: '1px solid #334155', color: '#f8fafc', borderRadius: 6, padding: '4px 10px', fontSize: 12, outline: 'none' }}
+                >
+                  <option value="all">Todas as Origens</option>
+                  <option value="TTS">TTS</option>
+                  <option value="STT">STT</option>
+                  <option value="LENS">LENS</option>
+                  <option value="ROUTER">ROUTER</option>
+                  <option value="API">API</option>
+                  <option value="SHORTCUT">SHORTCUT</option>
+                  <option value="SYSTEM">SYSTEM</option>
+                </select>
+              </div>
+
+              {/* Lista de Logs Técnicos */}
+              {(() => {
+                const rawItems = storageState?.logs?.items || [];
+                const filtered = rawItems.filter((item: TechnicalLogItem) => {
+                  if (logLevelFilter !== 'all' && item.level !== logLevelFilter) return false;
+                  if (logSourceFilter !== 'all' && item.source !== logSourceFilter) return false;
+                  return true;
+                });
+
+                if (filtered.length === 0) {
+                  return (
+                    <p style={{ fontSize: 13, color: '#64748b' }}>
+                      Nenhum log técnico registrado {logLevelFilter !== 'all' || logSourceFilter !== 'all' ? 'para os filtros selecionados' : 'ainda'}.
+                    </p>
+                  );
+                }
+
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 500, overflowY: 'auto' }}>
+                    {filtered.map((item: TechnicalLogItem) => {
+                      const isErr = item.level === 'error';
+                      const isWarn = item.level === 'warn';
+                      const badgeBg = isErr ? 'rgba(239, 68, 68, 0.2)' : isWarn ? 'rgba(245, 158, 11, 0.2)' : 'rgba(56, 189, 248, 0.2)';
+                      const badgeColor = isErr ? '#f87171' : isWarn ? '#fbbf24' : '#38bdf8';
+
+                      return (
+                        <div
+                          key={item.id}
+                          style={{
+                            padding: '10px 14px',
+                            background: isErr ? 'rgba(239, 68, 68, 0.06)' : '#1e293b',
+                            border: isErr ? '1px solid rgba(239, 68, 68, 0.3)' : '1px solid #334155',
+                            borderRadius: 8,
+                            fontSize: 12,
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 4,
+                          }}
+                        >
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                              <span style={{ fontWeight: 700, padding: '2px 6px', borderRadius: 4, fontSize: 10, background: badgeBg, color: badgeColor }}>
+                                {item.source} | {item.level.toUpperCase()}
+                              </span>
+                              <span style={{ color: '#cbd5e1', fontWeight: 600 }}>{item.operation}</span>
+                              {item.modelId && (
+                                <span style={{ fontSize: 10, background: 'rgba(255,255,255,0.08)', color: '#a5b4fc', padding: '2px 6px', borderRadius: 4, fontFamily: 'monospace' }}>
+                                  {item.modelId}
+                                </span>
+                              )}
+                              {item.httpStatus && (
+                                <span style={{ fontSize: 10, background: item.httpStatus >= 400 ? 'rgba(239,68,68,0.3)' : 'rgba(16,185,129,0.3)', color: item.httpStatus >= 400 ? '#f87171' : '#34d399', padding: '2px 6px', borderRadius: 4, fontFamily: 'monospace', fontWeight: 700 }}>
+                                  HTTP {item.httpStatus}
+                                </span>
+                              )}
+                              {item.durationMs && (
+                                <span style={{ fontSize: 10, color: '#64748b', fontFamily: 'monospace' }}>
+                                  {item.durationMs}ms
+                                </span>
+                              )}
+                            </div>
+                            <span style={{ color: '#64748b', fontFamily: 'monospace', fontSize: 11 }}>
+                              {new Date(item.timestamp).toLocaleTimeString()}
+                            </span>
+                          </div>
+
+                          <div style={{ color: isErr ? '#fca5a5' : '#f8fafc', fontSize: 12, wordBreak: 'break-word', margin: '2px 0' }}>
+                            {item.message}
+                          </div>
+
+                          {item.errorDetails && (
+                            <div style={{ marginTop: 4, padding: '6px 10px', background: 'rgba(0,0,0,0.4)', borderRadius: 6, color: '#f87171', fontFamily: 'monospace', fontSize: 11, wordBreak: 'break-word', maxHeight: 120, overflowY: 'auto' }}>
+                              {item.errorDetails}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 );
-              })}
+              })()}
+            </div>
+          )}
+
+          {/* SUB-ABA 2: HISTÓRICO DE ATIVIDADES */}
+          {historySubTab === 'history' && (
+            <div>
+              {(!storageState?.history?.recentItems || storageState.history.recentItems.length === 0) ? (
+                <p style={{ fontSize: 13, color: '#64748b' }}>Nenhum histórico de atividade registrado ainda.</p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 450, overflowY: 'auto' }}>
+                  {storageState.history.recentItems.map((item: HistoryItem) => {
+                    const isErr = item.status === 'error' || item.previewText.startsWith('❌');
+                    return (
+                      <div
+                        key={item.id}
+                        style={{
+                          padding: '12px 16px',
+                          background: isErr ? 'rgba(239, 68, 68, 0.08)' : '#1e293b',
+                          border: isErr ? '1px solid rgba(239, 68, 68, 0.3)' : '1px solid #334155',
+                          borderRadius: 10,
+                          fontSize: 12,
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 4,
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{ fontWeight: 700, padding: '2px 6px', borderRadius: 4, fontSize: 10, background: item.type === 'tts' ? 'rgba(56,189,248,0.2)' : item.type === 'stt' ? 'rgba(248,113,113,0.2)' : 'rgba(168,85,247,0.2)', color: item.type === 'tts' ? '#38bdf8' : item.type === 'stt' ? '#f87171' : '#c084fc' }}>
+                              {item.type.toUpperCase()}
+                            </span>
+                            <span style={{ color: isErr ? '#f87171' : '#f8fafc', fontWeight: isErr ? 600 : 400 }}>
+                              {item.previewText}
+                            </span>
+                          </div>
+                          <span style={{ color: '#64748b', fontFamily: 'monospace', fontSize: 11 }}>
+                            {new Date(item.timestamp).toLocaleTimeString()}
+                          </span>
+                        </div>
+
+                        {item.errorDetails && (
+                          <div style={{ marginTop: 4, padding: '6px 10px', background: 'rgba(0,0,0,0.3)', borderRadius: 6, color: '#fca5a5', fontFamily: 'monospace', fontSize: 11, wordBreak: 'break-word' }}>
+                            {item.errorDetails}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
         </div>

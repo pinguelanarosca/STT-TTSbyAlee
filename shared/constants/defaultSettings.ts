@@ -14,6 +14,7 @@ import {
   ModelsSettingsSchema,
   UiPreferencesSchema,
   HistorySettingsSchema,
+  TechnicalLogsSchema,
 } from '../types/storage';
 import { DEFAULT_AGENT_ID } from './defaultAgents';
 import { getFallbackModelForTask } from './modelsCatalog';
@@ -66,6 +67,12 @@ export const DEFAULT_HISTORY_SETTINGS: HistorySettingsSchema = {
   recentItems: [],
 };
 
+export const DEFAULT_LOGS_SETTINGS: TechnicalLogsSchema = {
+  enabled: true,
+  maxEntries: 100,
+  items: [],
+};
+
 export const DEFAULT_STORAGE_STATE: AppStorageSchema = {
   api: DEFAULT_API_SETTINGS,
   agents: DEFAULT_AGENTS_SETTINGS,
@@ -73,6 +80,7 @@ export const DEFAULT_STORAGE_STATE: AppStorageSchema = {
   models: DEFAULT_MODELS_SETTINGS,
   ui: DEFAULT_UI_PREFERENCES,
   history: DEFAULT_HISTORY_SETTINGS,
+  logs: DEFAULT_LOGS_SETTINGS,
 };
 
 export const DEFAULT_APP_STORAGE = DEFAULT_STORAGE_STATE;
@@ -89,6 +97,7 @@ export function migrateLegacyStorage(raw: Record<string, unknown>): AppStorageSc
     models: { ...DEFAULT_MODELS_SETTINGS },
     ui: { ...DEFAULT_UI_PREFERENCES },
     history: { ...DEFAULT_HISTORY_SETTINGS },
+    logs: { ...DEFAULT_LOGS_SETTINGS },
   };
 
   if (!raw || typeof raw !== 'object') return state;
@@ -130,6 +139,11 @@ export function migrateLegacyStorage(raw: Record<string, unknown>): AppStorageSc
   // Migração do namespace history
   if (raw.history && typeof raw.history === 'object') {
     state.history = { ...state.history, ...(raw.history as Partial<HistorySettingsSchema>) };
+  }
+
+  // Migração do namespace logs
+  if (raw.logs && typeof raw.logs === 'object') {
+    state.logs = { ...state.logs, ...(raw.logs as Partial<TechnicalLogsSchema>) };
   }
 
   return state;

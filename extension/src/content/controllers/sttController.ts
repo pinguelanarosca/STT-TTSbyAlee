@@ -10,6 +10,7 @@
 
 import { hud } from '../ui/hudController';
 import { injectTranscribedText } from '../dom/inputInjector';
+import { logDiagnostic } from '../../services/diagnosticLogger';
 
 interface SttTask {
   id: number;
@@ -100,6 +101,13 @@ export class SttController {
       this.queue.push(task);
       this.audioChunks = [];
 
+      logDiagnostic({
+        level: 'info',
+        source: 'STT',
+        operation: 'QUEUE_ENQUEUED',
+        message: `Tarefa #${task.id} adicionada à fila STT (${blob.size} bytes, ${normalizedMime})`,
+      });
+
       if (!this.isProcessingStt) {
         this.processNextInQueue();
       }
@@ -131,6 +139,13 @@ export class SttController {
     this.isProcessingStt = true;
     const task = this.queue[0];
 
+    await logDiagnostic({
+      level: 'info',
+      source: 'STT',
+      operation: 'PROCESSING',
+      message: `Processando tarefa #${task.id} da fila STT (${task.blob.size} bytes)`,
+    });
+
     hud.setStatus('loading', 'Transcrevendo');
     hud.setTextPreview(`Processando áudio (${task.blob.size} bytes)...`);
 
@@ -146,12 +161,20 @@ export class SttController {
             agentId: task.agentId,
           },
         },
-        (response) => {
+        async (response) => {
           if (chrome.runtime.lastError) {
             const err = chrome.runtime.lastError.message || 'Erro de conexão com a extensão';
             console.error('[STT Controller] Runtime error:', err);
             hud.setStatus('idle', 'Falha no STT');
             hud.setTextPreview(`❌ Erro: ${err}`);
+
+            await logDiagnostic({
+              level: 'error',
+              source: 'STT',
+              operation: 'QUEUE_COMPLETED',
+              message: `Tarefa #${task.id} finalizada com erro runtime: ${err}`,
+            });
+
             this.queue.shift();
             this.processNextInQueue();
             return;
@@ -162,6 +185,13 @@ export class SttController {
             console.error('[STT Controller]', err);
             hud.setStatus('idle', 'Falha no STT');
             hud.setTextPreview(`❌ Erro: ${err}`);
+
+            await logDiagnostic({
+              level: 'error',
+              source: 'STT',
+              operation: 'QUEUE_COMPLETED',
+              message: `Tarefa #${task.id} finalizada com falha: ${err}`,
+            });
           } else {
             const transcribed = response.data.text;
             hud.setStatus('idle', 'Pronto');
@@ -169,6 +199,13 @@ export class SttController {
 
             // Tenta injetar no campo ativo preservado da tarefa
             injectTranscribedText(transcribed, undefined, task.targetElement);
+
+            await logDiagnostic({
+              level: 'info',
+              source: 'STT',
+              operation: 'QUEUE_COMPLETED',
+              message: `Tarefa #${task.id} concluída com sucesso`,
+            });
           }
 
           // Avança na fila FIFO independentemente de sucesso ou falha
