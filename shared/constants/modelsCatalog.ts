@@ -12,7 +12,7 @@
  *    3. gemini-3.1-flash-tts-preview (Gemini 3.1 Flash TTS)
  *    4. gemini-2.5-flash-preview-tts (Gemini 2.5 Flash TTS)
  * 
- * 2. STT / MODELOS GERAIS (EXATAMENTE 2 MODELOS NESSA ORDEM ESTREITA):
+ * 2. STT UNARY / GERAL / VISÃO (EXATAMENTE 2 MODELOS NESSA ORDEM ESTREITA):
  *    1. gemini-3.5-flash-lite (Gemini 3.5 Flash-Lite)
  *    2. gemini-3.1-flash-lite (Gemini 3.1 Flash-Lite)
  * 
@@ -24,15 +24,16 @@
  * - sttModelId !== ttsModelId.
  * - Modelos TTS NUNCA entram no seletor STT.
  * - Modelos STT / Flash-Lite NUNCA entram no seletor TTS.
+ * - Modelos Flash-Lite operam STT Unary via generateContent (áudio multimodal). Não possuem suporte STT Live WebSocket.
  * - Maps Grounding é uma capability e NUNCA um modelo.
  * - Descoberta dinâmica por models.list() NUNCA adiciona modelos fora desta whitelist.
  * 
- * MOTOR DE FALLBACK:
- * - TTS: exatamente 3.8-flash-lite-tts -> 3.8-flash-tts -> 3.1-flash-tts-preview -> 2.5-flash-preview-tts (Zero-Retry).
- * - STT / Geral: exatamente 3.5-flash-lite -> 3.1-flash-lite (Zero-Retry).
- * - Auth Test: exatamente 3.1-flash-lite -> 3.5-flash-lite (Zero-Retry).
+ * MOTOR DE FALLBACK (Zero-Retry):
+ * - TTS: exatamente 3.8-flash-lite-tts -> 3.8-flash-tts -> 3.1-flash-tts-preview -> 2.5-flash-preview-tts.
+ * - STT / Geral / Vision: exatamente 3.5-flash-lite -> 3.1-flash-lite.
+ * - Auth Test: exatamente 3.1-flash-lite -> 3.5-flash-lite.
  * - Cada modelo é chamado no máximo uma vez por operação.
- * - Qualquer erro avança imediatamente ao próximo da cadeia sem retry ou backoff.
+ * - Qualquer erro encerra a tentativa daquele modelo e avança imediatamente ao próximo sem retry ou backoff.
  */
 
 import { ModelDescriptor } from '../types/models';
@@ -50,7 +51,7 @@ export const TTS_MODELS_WHITELIST = [
 export type TtsModelId = (typeof TTS_MODELS_WHITELIST)[number];
 
 /**
- * 2. WHITELIST OFICIAL E ORDEM EXATA DE STT E MODELOS GERAIS (EXATAMENTE 2)
+ * 2. WHITELIST OFICIAL E ORDEM EXATA DE STT UNARY, VISÃO E MODELOS GERAIS (EXATAMENTE 2)
  */
 export const STT_GENERAL_MODELS_WHITELIST = [
   'gemini-3.5-flash-lite',
@@ -59,14 +60,18 @@ export const STT_GENERAL_MODELS_WHITELIST = [
 
 export type SttGeneralModelId = (typeof STT_GENERAL_MODELS_WHITELIST)[number];
 
-// Aliases canônicos tipados
-export const FLASH_LITE_MODELS_WHITELIST = STT_GENERAL_MODELS_WHITELIST;
+// Whitelists tipadas e modeladas por tarefa específica
 export const STT_UNARY_MODELS_WHITELIST = STT_GENERAL_MODELS_WHITELIST;
-export const STT_LIVE_MODELS_WHITELIST = STT_GENERAL_MODELS_WHITELIST;
+export const GENERAL_MODELS_WHITELIST = STT_GENERAL_MODELS_WHITELIST;
+export const VISION_MODELS_WHITELIST = STT_GENERAL_MODELS_WHITELIST;
+export const FLASH_LITE_MODELS_WHITELIST = STT_GENERAL_MODELS_WHITELIST;
+
+// STT Live: Os modelos Flash-Lite do catálogo congelado não suportam protocolo WebSocket Live.
+// Declarado explicitamente vazio para evitar falsa atribuição semântica.
+export const STT_LIVE_MODELS_WHITELIST: readonly string[] = [] as const;
 
 export type FlashLiteModelId = SttGeneralModelId;
 export type SttUnaryModelId = SttGeneralModelId;
-export type SttLiveModelId = SttGeneralModelId;
 
 /**
  * 3. MODELO PADRÃO PARA TESTE DE CHAVE E CONECTIVIDADE
@@ -82,7 +87,7 @@ export const DEFAULT_VISION_MODEL: SttGeneralModelId = 'gemini-3.5-flash-lite';
 export const DEFAULT_GENERAL_MODEL: SttGeneralModelId = 'gemini-3.5-flash-lite';
 
 /**
- * Catálogo Canônico com descritores dos modelos da whitelist congelada.
+ * Catálogo Canônico com descritores reais dos modelos da whitelist congelada.
  */
 export const KNOWN_MODELS: Record<string, ModelDescriptor> = {
   // =========================================================================
@@ -178,12 +183,12 @@ export const KNOWN_MODELS: Record<string, ModelDescriptor> = {
   },
 
   // =========================================================================
-  // STT / MODELOS GERAIS FLASH-LITE (Ordem Exata 1 a 2)
+  // STT UNARY / MODELOS GERAIS FLASH-LITE (Ordem Exata 1 a 2)
   // =========================================================================
   'gemini-3.5-flash-lite': {
     id: 'gemini-3.5-flash-lite',
     displayName: 'Gemini 3.5 Flash-Lite',
-    description: 'Modelo Flash-Lite intermediário de alta eficiência para transcrição STT, visão multimodal e tarefas gerais.',
+    description: 'Modelo Flash-Lite intermediário para transcrição STT Unary via generateContent, visão multimodal e tarefas gerais.',
     category: 'general_multimodal',
     tier: 'lite',
     inputModalities: { text: true, image: true, audio: true, video: true },
@@ -193,7 +198,7 @@ export const KNOWN_MODELS: Record<string, ModelDescriptor> = {
       vision: { supported: true, method: 'generateContent' },
       stt: { supported: true, method: 'generateContent' },
       tts: { supported: false },
-      live: { supported: false },
+      live: { supported: false }, // Flash-Lite não é STT Live WebSocket
     },
     capabilities: { mapsGrounding: true },
     apiMethods: ['generateContent', 'generateContentStream'],
@@ -205,7 +210,7 @@ export const KNOWN_MODELS: Record<string, ModelDescriptor> = {
   'gemini-3.1-flash-lite': {
     id: 'gemini-3.1-flash-lite',
     displayName: 'Gemini 3.1 Flash-Lite',
-    description: 'Modelo leve de ultrabaixa latência para autenticação, testes de conectividade, transcrição e visão.',
+    description: 'Modelo leve de ultrabaixa latência para autenticação, testes de conectividade, STT Unary e visão.',
     category: 'general_multimodal',
     tier: 'lite',
     inputModalities: { text: true, image: true, audio: true, video: true },
@@ -215,7 +220,7 @@ export const KNOWN_MODELS: Record<string, ModelDescriptor> = {
       vision: { supported: true, method: 'generateContent' },
       stt: { supported: true, method: 'generateContent' },
       tts: { supported: false },
-      live: { supported: false },
+      live: { supported: false }, // Flash-Lite não é STT Live WebSocket
     },
     capabilities: { mapsGrounding: true },
     apiMethods: ['generateContent', 'generateContentStream'],
@@ -227,34 +232,54 @@ export const KNOWN_MODELS: Record<string, ModelDescriptor> = {
 };
 
 /**
- * Normalização direta para a whitelist congelada (sem criação de novos modelos).
+ * Registro explícito de migrações e compatibilidade de identificadores legados.
+ * Mapeia IDs de versões anteriores para o modelo suportado da categoria correta.
  */
-export const MODEL_ALIASES: Record<string, string> = {
-  'gemini-tts': 'gemini-3.8-flash-lite-tts',
-  'gemini-3.8-tts': 'gemini-3.8-flash-tts',
-  'gemini-3.1-tts': 'gemini-3.1-flash-tts-preview',
-  'gemini-2.5-tts': 'gemini-2.5-flash-preview-tts',
-  'gemini-transcribe': 'gemini-3.5-flash-lite',
-  'gemini-stt': 'gemini-3.5-flash-lite',
-  'gemini-flash': 'gemini-3.5-flash-lite',
-  'gemini-3.8-flash': 'gemini-3.5-flash-lite',
-  'gemini-3.5-transcribe': 'gemini-3.5-flash-lite',
-  'gemini-3.5-transcribe-live': 'gemini-3.5-flash-lite',
+export interface LegacyMigrationEntry {
+  targetModelId: string;
+  category: 'tts' | 'stt' | 'general' | 'vision';
+  reason: string;
+}
+
+export const LEGACY_MODEL_MIGRATIONS: Record<string, LegacyMigrationEntry> = {
+  // TTS Legados
+  'gemini-tts': { targetModelId: 'gemini-3.8-flash-lite-tts', category: 'tts', reason: 'Alias genérico de TTS' },
+  'gemini-3.8-tts': { targetModelId: 'gemini-3.8-flash-tts', category: 'tts', reason: 'Alias curto de TTS 3.8' },
+  'gemini-3.1-tts': { targetModelId: 'gemini-3.1-flash-tts-preview', category: 'tts', reason: 'Alias preview de TTS 3.1' },
+  'gemini-2.5-tts': { targetModelId: 'gemini-2.5-flash-preview-tts', category: 'tts', reason: 'Alias legado de TTS 2.5' },
+
+  // STT Legados (Modelos especializados anteriores migrados para a família Flash-Lite congelada)
+  'gemini-3.5-transcribe': { targetModelId: 'gemini-3.5-flash-lite', category: 'stt', reason: 'Modelo especializado STT legado migrado para Flash-Lite' },
+  'gemini-3.5-transcribe-live': { targetModelId: 'gemini-3.5-flash-lite', category: 'stt', reason: 'Modelo especializado Live legado migrado para Flash-Lite Unary' },
+  'gemini-transcribe': { targetModelId: 'gemini-3.5-flash-lite', category: 'stt', reason: 'Alias genérico legado de STT' },
+  'gemini-stt': { targetModelId: 'gemini-3.5-flash-lite', category: 'stt', reason: 'Alias genérico legado de STT' },
+
+  // Modelos Gerais / Pro Legados
+  'gemini-3.8-flash': { targetModelId: 'gemini-3.5-flash-lite', category: 'general', reason: 'Modelo geral 3.8 migrado para Flash-Lite congelado' },
+  'gemini-3.1-pro-preview': { targetModelId: 'gemini-3.1-flash-lite', category: 'general', reason: 'Modelo Pro experimental migrado para Flash-Lite congelado' },
+  'gemini-2.5-flash': { targetModelId: 'gemini-3.5-flash-lite', category: 'general', reason: 'Modelo geral 2.5 migrado para Flash-Lite congelado' },
+  'gemini-flash': { targetModelId: 'gemini-3.5-flash-lite', category: 'general', reason: 'Alias genérico flash' },
 };
+
+/**
+ * Mapa direto para resolução rápida de aliases.
+ */
+export const MODEL_ALIASES: Record<string, string> = Object.fromEntries(
+  Object.entries(LEGACY_MODEL_MIGRATIONS).map(([key, val]) => [key, val.targetModelId])
+);
 
 /**
  * CADEIAS DE FALLBACK EXATAS CONGELADAS (Zero-Retry):
  * - TTS: gemini-3.8-flash-lite-tts -> gemini-3.8-flash-tts -> gemini-3.1-flash-tts-preview -> gemini-2.5-flash-preview-tts
- * - STT / Geral / Vision: gemini-3.5-flash-lite -> gemini-3.1-flash-lite
+ * - STT / STT Unary / Geral / Vision: gemini-3.5-flash-lite -> gemini-3.1-flash-lite
  * - Auth Test: gemini-3.1-flash-lite -> gemini-3.5-flash-lite
  */
 export const TASK_FALLBACK_CHAINS = {
   tts: TTS_MODELS_WHITELIST,
-  stt: STT_GENERAL_MODELS_WHITELIST,
-  stt_unary: STT_GENERAL_MODELS_WHITELIST,
-  stt_live: STT_GENERAL_MODELS_WHITELIST,
-  vision: STT_GENERAL_MODELS_WHITELIST,
-  general: STT_GENERAL_MODELS_WHITELIST,
+  stt: STT_UNARY_MODELS_WHITELIST,
+  stt_unary: STT_UNARY_MODELS_WHITELIST,
+  vision: VISION_MODELS_WHITELIST,
+  general: GENERAL_MODELS_WHITELIST,
   auth_test: ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite'] as const,
 } as const;
 
@@ -275,7 +300,7 @@ export function getFallbackModelForTask(task: TaskFallbackKey): string {
 }
 
 /**
- * Normaliza um ID de modelo para a whitelist estrita.
+ * Normaliza um ID de modelo para a whitelist estrita baseado na tarefa pretendida.
  */
 export function normalizeModelId(
   rawModelId: string | undefined | null,
@@ -291,10 +316,11 @@ export function normalizeModelId(
     return trimmed;
   }
 
-  if (MODEL_ALIASES[trimmed]) {
-    const target = MODEL_ALIASES[trimmed];
-    if (chain.includes(target as any)) {
-      return target;
+  // Verifica mapeamento explícito de migração legado
+  if (LEGACY_MODEL_MIGRATIONS[trimmed]) {
+    const migration = LEGACY_MODEL_MIGRATIONS[trimmed];
+    if (chain.includes(migration.targetModelId as any)) {
+      return migration.targetModelId;
     }
   }
 

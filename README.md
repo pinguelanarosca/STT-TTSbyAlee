@@ -1,10 +1,10 @@
-# EXT TTS STT — Chrome Extension & Web Studio (Gemini 2.0 / 3.x Multimodal)
+# STT-TTSbyAlee — Chrome Extension & Web Studio (Gemini Audio & Flash-Lite)
 
-Suíte completa e modular para Text-to-Speech (TTS), Speech-to-Text (STT) e inspeção multimodal visual (Gemini Lens), alimentada diretamente pelos modelos da família Google Gemini (`@google/genai`).
+Suíte completa e modular para Text-to-Speech (TTS), Speech-to-Text (STT) e inspeção multimodal visual (Gemini Lens), alimentada diretamente pelo catálogo oficial de modelos da família Google Gemini (`@google/genai`).
 
 O projeto é composto por dois módulos perfeitamente sincronizados que compartilham contratos, schemas de storage, catálogo de modelos e lógica pura em `shared/`:
 1. **Extensão Chrome (Manifest V3)**: Injeção de voz e ditado na página web com controles flutuantes via Shadow DOM isolado, atalhos de teclado e popup/options em React 19.
-2. **Web Studio (Full-Stack)**: Dashboard em React 19 + Express para Test Arena (TTS, STT, Visão e Mixer), CRUD de Personas/Agentes, catálogo de modelos em runtime e distribuição de pacotes da extensão.
+2. **Web Studio (Full-Stack)**: Dashboard em React 19 + Express para Test Arena (TTS, STT, Visão e Mixer), CRUD de Personas/Agentes, catálogo de modelos congelado e distribuição de pacotes da extensão.
 
 ---
 
@@ -103,26 +103,37 @@ cp .env.example .env
 
 ---
 
-## 🧠 Matriz e Protocolos de Modelos Gemini
+## 🧠 Matriz de Modelos Gemini e Motor de Fallback (Zero-Retry)
 
-O projeto respeita estritamente os protocolos da API Gemini sem cruzamento inválido de tarefas:
+O catálogo de modelos é estritamente congelado e unificado em `shared/constants/modelsCatalog.ts`:
 
-- **TTS Nativo (generateContent com AUDIO)**:
-  - Principal: `gemini-3.8-flash-lite-tts`
-  - Fallback: `gemini-3.8-flash-tts`
-- **STT Unary (Áudio pré-gravado)**:
-  - Principal: `gemini-3.5-transcribe`
-- **STT Streaming (Live API / WebSocket)**:
-  - Principal: `gemini-3.5-transcribe-live`
-- **Multimodal Vision / Geral**:
-  - Principal: `gemini-3.8-flash`
-  - Fallback: `gemini-3.1-pro-preview`
+### 1. TTS Nativo (Ordem Estrita e Whitelist de 4 Modelos)
+1. `gemini-3.8-flash-lite-tts` (Padrão de síntese de áudio de alta eficiência e baixa latência)
+2. `gemini-3.8-flash-tts` (Síntese expressiva e diálogos)
+3. `gemini-3.1-flash-tts-preview` (Preview de síntese natural)
+4. `gemini-2.5-flash-preview-tts` (Compatibilidade para síntese vocal)
+
+*Cadeia de fallback: `3.8-flash-lite-tts` ➔ `3.8-flash-tts` ➔ `3.1-flash-tts-preview` ➔ `2.5-flash-preview-tts`.*
+
+### 2. STT Unary / Visão Multimodal / Modelos Gerais (Ordem Estrita de 2 Modelos)
+1. `gemini-3.5-flash-lite` (Transcrição STT Unary via `generateContent`, análise de imagem e texto)
+2. `gemini-3.1-flash-lite` (Ultrabaixa latência para visão, transcrição e testes)
+
+*Cadeia de fallback: `gemini-3.5-flash-lite` ➔ `gemini-3.1-flash-lite`.*
+
+### 3. Teste de Conectividade e Autenticação de Chave de API
+- Modelo inicial: `gemini-3.1-flash-lite`.
+
+### 4. Regras do Motor Zero-Retry
+- **Zero-Retry**: Nenhum modelo é chamado mais de uma vez por operação (`A ➔ B ➔ C`).
+- **Zero-Backoff**: Ao ocorrer erro (4xx/5xx/quota/timeout), avança imediatamente para o próximo modelo da cadeia.
+- **Independência**: `sttModelId !== ttsModelId`. Modelos TTS não aparecem em seletores de STT e vice-versa.
 
 ---
 
 ## 🔒 Garantias Arquiteturais e Isolamento
 
-- **Zero Duplicação (SSOT)**: Os 8 agentes canônicos (`narrator`, `translator`, `executive`, `creative`, `concise`, `teacher`, `podcast`, `technical`), suas instruções e aliases residem exclusivamente em `shared/constants/defaultAgents.ts`.
+- **Zero Duplicação (SSOT)**: Os 8 agentes canônicos (`narrator`, `translator`, `summarizer`, `editor`, `explainer`, `developer`, `podcast`, `accessibility`), suas instruções e aliases residem exclusivamente em `shared/constants/defaultAgents.ts`.
 - **Isolamento de Camadas**:
   - `shared/`: Código isomórfico puro sem React, DOM, Chrome ou Node.
   - `extension/src/content/`: Script nativo com **0 dependências de React/Server** e injeção em Shadow DOM encapsulado.
