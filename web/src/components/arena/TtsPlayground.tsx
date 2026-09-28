@@ -3,20 +3,25 @@
  * SPDX-License-Identifier: Apache-2.0
  * 
  * Painel de Testes e Síntese de Voz (TTS) do Test Arena.
+ * Otimizado com particionamento de texto (chunking), prefetching não-bloqueante,
+ * cancelamento via AbortController e zero sobrecarga de CPU/memória.
  */
 
-import React, { useState, useRef, useEffect } from 'react';
-import { Play, Pause, Square, Volume2, Sparkles, RefreshCw, Copy, Check, Radio, X } from 'lucide-react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { Play, Pause, Square, Volume2, Sparkles, RefreshCw, Copy, Check, X } from 'lucide-react';
 import { CanonicalAgent } from '@shared/types/agent';
+import { splitTextIntoChunks, cleanTextForTts } from '@shared/utils/textCleaner';
 import { geminiApi } from '../../services/geminiApiClient';
 import { audioPlayer } from '../../audio/audioPlayer';
 import { audioVisualizer } from '../../audio/audioVisualizer';
-import { audioContextManager } from '../../audio/audioContextManager';
 
 interface TtsPlaygroundProps {
   activeAgent: CanonicalAgent;
   onActivityLog: (type: 'tts' | 'stt' | 'vision', preview: string) => void;
 }
+
+const MAX_TOTAL_TEXT_LENGTH = 10000;
+const CHUNK_SIZE = 600;
 
 export const TtsPlayground: React.FC<TtsPlaygroundProps> = ({ activeAgent, onActivityLog }) => {
   const [text, setText] = useState<string>(
@@ -30,17 +35,121 @@ export const TtsPlayground: React.FC<TtsPlaygroundProps> = ({ activeAgent, onAct
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [showPopup, setShowPopup] = useState(false);
   const [popupStatus, setPopupStatus] = useState<'synthesizing' | 'playing' | 'paused' | 'done'>('done');
+  const [chunkProgress, setChunkProgress] = useState<{ current: number; total: number } | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const popupCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
+  // Controle de Abort, Fila de Chunks e Prefetch
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const isCancelledRef = useRef<boolean>(false);
+  const chunksQueueRef = useRef<string[]>([]);
+  const currentChunkIdxRef = useRef<number>(0);
+  const prefetchedAudioRef = useRef<Map<number, { audioBase64: string; mimeType: string }>>(new Map());
+
+  const handleStopPlayback = useCallback(() => {
+    isCancelledRef.current = true;
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    audioPlayer.stop();
+    audioVisualizer.stop();
+    chunksQueueRef.current = [];
+    prefetchedAudioRef.current.clear();
+    setIsLoading(false);
+    setIsPlaying(false);
+    setPopupStatus('done');
+    setChunkProgress(null);
+  }, []);
+
+  // Sintetiza um chunk específico com suporte a AbortSignal
+  const fetchChunkAudio = useCallback(async (
+    chunkText: string,
+    signal: AbortSignal
+  ): Promise<{ audioBase64: string; mimeType: string }> => {
+    const response = await geminiApi.synthesizeSpeech(
+      {
+        text: chunkText,
+        voiceName: activeAgent.voice.preferredVoice,
+        rateMultiplier: speed,
+        pitchMultiplier: activeAgent.voice.pitchMultiplier,
+        systemInstruction: activeAgent.instructions.ttsSystemInstruction,
+        modelId: activeAgent.modelPreferences.ttsModelId,
+      },
+      { signal, timeoutMs: 25000 }
+    );
+    return { audioBase64: response.audioBase64, mimeType: response.mimeType };
+  }, [activeAgent, speed]);
+
+  // Reproduz sequencialmente os chunks da fila
+  const playNextChunk = useCallback(async () => {
+    if (isCancelledRef.current) return;
+
+    const idx = currentChunkIdxRef.current;
+    const total = chunksQueueRef.current.length;
+
+    if (idx >= total) {
+      setPopupStatus('done');
+      setIsPlaying(false);
+      setChunkProgress(null);
+      return;
+    }
+
+    setChunkProgress({ current: idx + 1, total });
+    const currentText = chunksQueueRef.current[idx];
+
+    try {
+      let audioData = prefetchedAudioRef.current.get(idx);
+
+      if (!audioData) {
+        setIsLoading(true);
+        setPopupStatus('synthesizing');
+        const controller = new AbortController();
+        abortControllerRef.current = controller;
+        audioData = await fetchChunkAudio(currentText, controller.signal);
+      }
+
+      if (isCancelledRef.current) return;
+
+      setIsLoading(false);
+      setPopupStatus('playing');
+
+      // Prefetch do próximo chunk em background (não bloqueia UI)
+      const nextIdx = idx + 1;
+      if (nextIdx < total && !prefetchedAudioRef.current.has(nextIdx)) {
+        const nextText = chunksQueueRef.current[nextIdx];
+        const prefetchController = new AbortController();
+        fetchChunkAudio(nextText, prefetchController.signal)
+          .then((res) => {
+            if (!isCancelledRef.current) {
+              prefetchedAudioRef.current.set(nextIdx, res);
+            }
+          })
+          .catch(() => {
+            // Se falhar no prefetch, busca sob demanda quando chegar a vez
+          });
+      }
+
+      await audioPlayer.playBase64(audioData.audioBase64, audioData.mimeType, volume, speed);
+    } catch (err) {
+      if (isCancelledRef.current) return;
+      const msg = err instanceof Error ? err.message : String(err);
+      setErrorMsg(msg);
+      setPopupStatus('done');
+      setIsLoading(false);
+      setIsPlaying(false);
+    }
+  }, [fetchChunkAudio, volume, speed]);
+
+  // Registra listeners de ciclo de vida do áudio
   useEffect(() => {
     audioPlayer.onPlayStateChange = (playing) => {
       setIsPlaying(playing);
       if (playing) {
         setPopupStatus('playing');
-        if (canvasRef.current) audioVisualizer.startBars(canvasRef.current);
-        if (popupCanvasRef.current) audioVisualizer.startBars(popupCanvasRef.current);
+        const canvases = [canvasRef.current, popupCanvasRef.current].filter(Boolean) as HTMLCanvasElement[];
+        audioVisualizer.startBars(canvases);
       } else {
         setPopupStatus((prev) => (prev === 'playing' ? 'paused' : prev));
         audioVisualizer.stop();
@@ -48,47 +157,57 @@ export const TtsPlayground: React.FC<TtsPlaygroundProps> = ({ activeAgent, onAct
     };
 
     audioPlayer.onEnded = () => {
-      setPopupStatus('done');
-      setIsPlaying(false);
+      if (isCancelledRef.current) return;
+
+      // Avança para o próximo chunk se houver
+      currentChunkIdxRef.current += 1;
+      if (currentChunkIdxRef.current < chunksQueueRef.current.length) {
+        playNextChunk();
+      } else {
+        setPopupStatus('done');
+        setIsPlaying(false);
+        setChunkProgress(null);
+      }
     };
-  }, []);
+
+    return () => {
+      handleStopPlayback();
+    };
+  }, [handleStopPlayback, playNextChunk]);
 
   const handleSynthesizeAndPlay = async () => {
-    if (!text.trim()) return;
+    const rawText = text.trim();
+    if (!rawText) return;
 
-    // Desbloqueia o Web AudioContext imediatamente no clique
-    try {
-      const ctx = audioContextManager.getContext();
-      if (ctx.state === 'suspended') {
-        ctx.resume().catch(console.error);
-      }
-    } catch {}
+    if (rawText.length > MAX_TOTAL_TEXT_LENGTH) {
+      setErrorMsg(`O texto informado possui ${rawText.length} caracteres e excede o limite máximo seguro de ${MAX_TOTAL_TEXT_LENGTH}. Reduza o texto para prosseguir.`);
+      return;
+    }
 
-    setIsLoading(true);
+    handleStopPlayback();
+    isCancelledRef.current = false;
     setErrorMsg(null);
     setShowPopup(true);
     setPopupStatus('synthesizing');
+    setIsLoading(true);
 
-    try {
-      const response = await geminiApi.synthesizeSpeech({
-        text,
-        voiceName: activeAgent.voice.preferredVoice,
-        rateMultiplier: speed,
-        pitchMultiplier: activeAgent.voice.pitchMultiplier,
-        systemInstruction: activeAgent.instructions.ttsSystemInstruction,
-        modelId: activeAgent.modelPreferences.ttsModelId,
-      });
+    // Particiona o texto com segurança respeitando pontuações
+    const cleaned = cleanTextForTts(rawText);
+    const chunks = splitTextIntoChunks(cleaned || rawText, CHUNK_SIZE);
 
-      setPopupStatus('playing');
-      await audioPlayer.playBase64(response.audioBase64, response.mimeType, volume, speed);
-      onActivityLog('tts', text);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setErrorMsg(msg);
-      setPopupStatus('done');
-    } finally {
+    if (chunks.length === 0) {
       setIsLoading(false);
+      setPopupStatus('done');
+      return;
     }
+
+    chunksQueueRef.current = chunks;
+    currentChunkIdxRef.current = 0;
+    prefetchedAudioRef.current.clear();
+    setChunkProgress({ current: 1, total: chunks.length });
+
+    onActivityLog('tts', rawText.length > 80 ? rawText.substring(0, 80) + '...' : rawText);
+    await playNextChunk();
   };
 
   const handleCopyText = () => {
@@ -121,8 +240,8 @@ export const TtsPlayground: React.FC<TtsPlaygroundProps> = ({ activeAgent, onAct
                 ></span>
               </span>
               <span className="text-xs font-semibold text-slate-100">
-                {popupStatus === 'synthesizing' && '⚡ Sintetizando Fala com Gemini...'}
-                {popupStatus === 'playing' && `▶ Narrando com ${activeAgent.metadata.name} (${activeAgent.voice.preferredVoice})`}
+                {popupStatus === 'synthesizing' && (chunkProgress && chunkProgress.total > 1 ? `⚡ Sintetizando Bloco ${chunkProgress.current}/${chunkProgress.total}...` : '⚡ Sintetizando Fala com Gemini...')}
+                {popupStatus === 'playing' && (chunkProgress && chunkProgress.total > 1 ? `▶ Narrando (${chunkProgress.current}/${chunkProgress.total}) com ${activeAgent.metadata.name}` : `▶ Narrando com ${activeAgent.metadata.name} (${activeAgent.voice.preferredVoice})`)}
                 {popupStatus === 'paused' && '⏸ Narração Pausada'}
                 {popupStatus === 'done' && '⏹ Narração Concluída'}
               </span>
@@ -134,9 +253,9 @@ export const TtsPlayground: React.FC<TtsPlaygroundProps> = ({ activeAgent, onAct
             <button
               onClick={() => {
                 setShowPopup(false);
-                if (isPlaying) audioPlayer.stop();
+                handleStopPlayback();
               }}
-              className="text-slate-400 hover:text-slate-100 p-1 rounded-md hover:bg-slate-800 transition"
+              className="text-slate-400 hover:text-slate-100 p-1 rounded-md hover:bg-slate-800 transition cursor-pointer"
               title="Fechar painel de narração"
             >
               <X className="w-3.5 h-3.5" />
@@ -156,18 +275,15 @@ export const TtsPlayground: React.FC<TtsPlaygroundProps> = ({ activeAgent, onAct
               <button
                 onClick={() => audioPlayer.togglePlayPause()}
                 disabled={popupStatus === 'synthesizing' || popupStatus === 'done'}
-                className="px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs font-medium flex items-center gap-1 transition"
+                className="px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs font-medium flex items-center gap-1 transition cursor-pointer"
               >
                 {isPlaying ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
                 <span>{isPlaying ? 'Pausar' : 'Ouvir'}</span>
               </button>
 
               <button
-                onClick={() => {
-                  audioPlayer.stop();
-                  setPopupStatus('done');
-                }}
-                className="p-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs transition"
+                onClick={handleStopPlayback}
+                className="p-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs transition cursor-pointer"
                 title="Parar áudio"
               >
                 <Square className="w-3 h-3" />
@@ -190,7 +306,7 @@ export const TtsPlayground: React.FC<TtsPlaygroundProps> = ({ activeAgent, onAct
 
         <button
           onClick={handleCopyText}
-          className="text-slate-400 hover:text-slate-200 text-xs flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-800 border border-slate-700 transition"
+          className="text-slate-400 hover:text-slate-200 text-xs flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-800 border border-slate-700 transition cursor-pointer"
         >
           {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
           <span>{copied ? 'Copiado' : 'Copiar'}</span>
@@ -206,7 +322,7 @@ export const TtsPlayground: React.FC<TtsPlaygroundProps> = ({ activeAgent, onAct
           className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3.5 text-sm text-slate-200 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition resize-none"
         />
         <div className="absolute right-3 bottom-3 text-xs text-slate-500 font-mono">
-          {text.length} chars
+          {text.length} chars {text.length > CHUNK_SIZE && `(${Math.ceil(text.length / CHUNK_SIZE)} blocos)`}
         </div>
       </div>
 
@@ -294,10 +410,7 @@ export const TtsPlayground: React.FC<TtsPlaygroundProps> = ({ activeAgent, onAct
         </button>
 
         <button
-          onClick={() => {
-            audioPlayer.stop();
-            setPopupStatus('done');
-          }}
+          onClick={handleStopPlayback}
           className="p-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition cursor-pointer"
           title="Parar áudio"
         >
