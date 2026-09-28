@@ -4,7 +4,7 @@
  * 
  * Entrypoint modular do Content Script (Manifest V3).
  * Inicializa controladores, listeners de mensagens e atalhos de teclado.
- * NÃO importa React nem bibliotecas pesadas.
+ * Possui guard global para impedir injeções e listeners duplicados.
  */
 
 import { hud } from './ui/hudController';
@@ -17,13 +17,29 @@ import { injectTranscribedText } from './dom/inputInjector';
 // Estilos CSS do HUD
 import hudCss from './styles/hud.css?raw';
 
+// Guard global para evitar duplicação de content scripts e listeners
+declare global {
+  interface Window {
+    __STT_TTSBYALEE_INITIALIZED__?: boolean;
+  }
+}
+
 function initialize(): void {
+  if (window.__STT_TTSBYALEE_INITIALIZED__) {
+    return;
+  }
+  window.__STT_TTSBYALEE_INITIALIZED__ = true;
+
   // Inicializa o HUD no Shadow DOM
   hud.init(hudCss);
 
   // Conecta ações do HUD aos controladores
   hud.onPlayPauseClick = () => tts.togglePlayPause();
   hud.onStopClick = () => tts.stop();
+  hud.onCloseClick = () => {
+    tts.stop();
+    stt.cancelRecording();
+  };
   hud.onRecordClick = () => stt.toggleRecording();
   hud.onVolumeChange = (vol) => tts.setVolume(vol);
   hud.onSpeedChange = (speed) => tts.setSpeed(speed);

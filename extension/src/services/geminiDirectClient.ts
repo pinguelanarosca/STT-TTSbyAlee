@@ -96,19 +96,19 @@ export class GeminiDirectClient {
 
           if (!response.ok) {
             const errorText = await response.text();
-            console.warn(`[TTS Client] Falha HTTP (${response.status}) no modelo ${modelId}: ${errorText.substring(0, 150)}`);
+            console.error(`[TTS Client] Falha HTTP (${response.status}) no modelo ${modelId}:`, errorText);
             throw new Error(`Falha HTTP (${response.status}) no modelo ${modelId}: ${errorText}`);
           }
 
           const data = await response.json();
           const candidatePart = data.candidates?.[0]?.content?.parts?.[0];
 
-          if (!candidatePart?.inlineData?.data) {
+          if (!candidatePart?.inlineData?.data && !candidatePart?.inline_data?.data) {
             console.warn(`[TTS Client] Modelo ${modelId} não retornou dados de áudio.`);
             throw new Error(`Modelo ${modelId} não retornou dados de áudio na resposta.`);
           }
 
-          const rawBase64 = candidatePart.inlineData.data;
+          const rawBase64 = candidatePart.inlineData?.data || candidatePart.inline_data?.data;
 
           if (typeof rawBase64 !== 'string' || rawBase64.length === 0) {
             throw new Error(`Modelo ${modelId} retornou payload de áudio vazio.`);
@@ -159,9 +159,17 @@ export class GeminiDirectClient {
     apiKey: string,
     parentSignal?: AbortSignal
   ): Promise<string> {
+    if (!apiKey) {
+      throw new Error('Chave de API Gemini não informada.');
+    }
+
     const promptText = request.formattingInstruction
       ? `Transcreva o seguinte áudio respeitando estritamente esta instrução: ${request.formattingInstruction}`
       : 'Transcreva o áudio com pontuação e ortografia correta, sem adicionar introduções ou conclusões.';
+
+    // Normaliza estritamente o mimeType removendo parâmetros como ;codecs=opus que causam HTTP 400
+    const rawMime = request.mimeType || 'audio/webm';
+    const normalizedMime = rawMime.split(';')[0].trim() || 'audio/webm';
 
     const { result } = await executeWithZeroRetryFallback(
       'stt_unary',
@@ -170,6 +178,8 @@ export class GeminiDirectClient {
         if (parentSignal?.aborted) {
           throw new Error('Operação STT cancelada.');
         }
+
+        console.log(`[STT Client] Tentando transcrição com o modelo: ${modelId}, mimeType normalizado: ${normalizedMime}`);
 
         const controller = new AbortController();
         const timeoutId = setTimeout(() => {
@@ -185,8 +195,8 @@ export class GeminiDirectClient {
                 role: 'user',
                 parts: [
                   {
-                    inlineData: {
-                      mimeType: request.mimeType || 'audio/wav',
+                    inline_data: {
+                      mime_type: normalizedMime,
                       data: request.audioBase64,
                     },
                   },
@@ -207,6 +217,7 @@ export class GeminiDirectClient {
 
           if (!response.ok) {
             const errorText = await response.text();
+            console.error(`[STT Client] Falha HTTP (${response.status}) no modelo ${modelId}:`, errorText);
             throw new Error(`Falha HTTP (${response.status}) no modelo ${modelId}: ${errorText}`);
           }
 
@@ -217,6 +228,7 @@ export class GeminiDirectClient {
             throw new Error(`Modelo ${modelId} não retornou transcrição.`);
           }
 
+          console.log(`[STT Client] Transcrição concluída com sucesso via modelo: ${modelId}`);
           return textOutput.trim();
         } finally {
           clearTimeout(timeoutId);
@@ -236,10 +248,16 @@ export class GeminiDirectClient {
     apiKey: string,
     modelId?: string
   ): Promise<string> {
+    if (!apiKey) {
+      throw new Error('Chave de API Gemini não informada.');
+    }
+
     const { result } = await executeWithZeroRetryFallback(
       'vision',
       modelId,
       async (targetModel) => {
+        console.log(`[Vision Client] Tentando análise visual com o modelo: ${targetModel}`);
+
         const controller = new AbortController();
         const timeoutId = setTimeout(() => {
           controller.abort(new Error(`Timeout de 15s excedido no modelo ${targetModel}.`));
@@ -254,8 +272,8 @@ export class GeminiDirectClient {
                 role: 'user',
                 parts: [
                   {
-                    inlineData: {
-                      mimeType: 'image/jpeg',
+                    inline_data: {
+                      mime_type: 'image/jpeg',
                       data: imageBase64,
                     },
                   },
@@ -276,11 +294,14 @@ export class GeminiDirectClient {
 
           if (!response.ok) {
             const errorText = await response.text();
+            console.error(`[Vision Client] Falha HTTP (${response.status}) no modelo ${targetModel}:`, errorText);
             throw new Error(`Falha HTTP (${response.status}) no modelo ${targetModel}: ${errorText}`);
           }
 
           const data = await response.json();
-          return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          const description = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          console.log(`[Vision Client] Análise visual concluída com sucesso via modelo: ${targetModel}`);
+          return description.trim();
         } finally {
           clearTimeout(timeoutId);
         }

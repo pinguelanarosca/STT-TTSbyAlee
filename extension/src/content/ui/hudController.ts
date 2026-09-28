@@ -18,6 +18,7 @@ export class HudController {
 
   public onPlayPauseClick?: () => void;
   public onStopClick?: () => void;
+  public onCloseClick?: () => void;
   public onRecordClick?: () => void;
   public onVolumeChange?: (vol: number) => void;
   public onSpeedChange?: (speed: number) => void;
@@ -96,7 +97,11 @@ export class HudController {
     const micBtn = wrapper.querySelector('#ext-btn-mic');
     const stopBtn = wrapper.querySelector('#ext-btn-stop');
 
-    closeBtn?.addEventListener('click', () => this.hide());
+    closeBtn?.addEventListener('click', () => {
+      this.hide();
+      this.onCloseClick?.();
+    });
+
     minBtn?.addEventListener('click', () => this.hide());
 
     this.playPauseBtn?.addEventListener('click', () => this.onPlayPauseClick?.());

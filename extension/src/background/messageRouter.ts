@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  * 
  * Roteador de mensagens tipado da Extensão Chrome (Service Worker).
- * Despacha requisições entre Content Script, Popup e Options com suporte a cancelamento de TTS.
+ * Despacha requisições entre Content Script, Popup e Options com suporte a cancelamento de TTS e recorte no Lens.
  */
 
 import { AnyExtensionMessage, ExtensionResponse } from '@shared/types/messages';
@@ -87,7 +87,7 @@ export async function handleExtensionMessage(
         const { audioBase64, mimeType, agentId, targetInputSelector } = message.payload;
         const apiSettings = await chromeStorage.get('api');
         if (!apiSettings.apiKey) {
-          return { success: false, error: 'Chave de API Gemini não configurada.' };
+          return { success: false, error: 'Chave de API Gemini não configurada. Abra as opções para configurar.' };
         }
 
         const agentsSettings = await chromeStorage.get('agents');
@@ -95,6 +95,8 @@ export async function handleExtensionMessage(
         const agent = customAgent || getCanonicalAgent(agentId);
         const modelsSettings = await chromeStorage.get('models');
         const sttModelId = agent.modelPreferences.sttModelId || modelsSettings.sttModelId;
+
+        console.log(`[STT Router] Iniciando transcrição com ${sttModelId}, mimeType: ${mimeType}`);
 
         const transcribedText = await geminiDirectClient.transcribeAudio(
           {
@@ -143,10 +145,12 @@ export async function handleExtensionMessage(
         if (!tabId) {
           return { success: false, error: 'Aba não identificada para captura visual.' };
         }
+        console.log(`[Lens Router] Iniciando captura visual para aba ${tabId}`);
         const description = await captureAndAnalyzeTab(
           tabId,
           message.payload.instruction,
-          message.payload.agentId
+          message.payload.agentId,
+          message.payload.rect
         );
         return { success: true, data: description };
       }

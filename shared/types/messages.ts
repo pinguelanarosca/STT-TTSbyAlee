@@ -23,7 +23,9 @@ export type ExtensionMessageType =
   | 'TEST_API_KEY'
   | 'DISCOVER_MODELS'
   | 'GET_SETTINGS'
-  | 'SAVE_SETTINGS';
+  | 'SAVE_SETTINGS'
+  | 'CMD_READ_SELECTION'
+  | 'CMD_START_DICTATION';
 
 export interface BaseMessage<T extends ExtensionMessageType, P = unknown> {
   type: T;
@@ -80,6 +82,13 @@ export type DiscoverModelsMessage = BaseMessage<'DISCOVER_MODELS', void>;
 export type LensAnalyzeMessage = BaseMessage<'LENS_ANALYZE_REQUEST', {
   instruction?: string;
   agentId?: string;
+  rect?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    devicePixelRatio?: number;
+  };
 }>;
 
 export type LensResultMessage = BaseMessage<'LENS_RESULT', {
