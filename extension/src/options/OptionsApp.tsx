@@ -42,6 +42,7 @@ import { AppStorageSchema } from '@shared/types/storage';
 import { CanonicalAgent, GeminiVoiceName, AmbienceType } from '@shared/types/agent';
 import { DEFAULT_AGENTS, getCanonicalAgent } from '@shared/constants/defaultAgents';
 import { KNOWN_MODELS, TASK_FALLBACK_CHAINS, validateAgentModelIntegrity } from '@shared/constants/modelsCatalog';
+import { base64ToUint8Array } from '@shared/utils/pcmWav';
 import { chromeStorage } from '../services/storage/chromeStorageAdapter';
 import { geminiDirectClient } from '../services/geminiDirectClient';
 
@@ -250,13 +251,8 @@ export const OptionsApp: React.FC = () => {
         storageState.api.apiKey
       );
 
-      // Decodifica Base64 para Uint8Array
-      const binaryString = atob(response.audioBase64);
-      const len = binaryString.length;
-      const bytes = new Uint8Array(len);
-      for (let i = 0; i < len; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-      }
+      // Decodifica Base64 de alta performance
+      const bytes = base64ToUint8Array(response.audioBase64);
 
       await playAudioWithAcousticFilters(bytes, agentForm.voice.rateMultiplier, agentForm.voice.volume);
     } catch (err) {

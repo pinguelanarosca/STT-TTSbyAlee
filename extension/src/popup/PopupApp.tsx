@@ -10,12 +10,14 @@ import { Volume2, Mic, Settings, Eye, CheckCircle2, AlertCircle } from 'lucide-r
 import { DEFAULT_AGENTS } from '@shared/constants/defaultAgents';
 import { CanonicalAgent } from '@shared/types/agent';
 import { chromeStorage } from '../services/storage/chromeStorageAdapter';
+import { sendTabMessageSafe, isRestrictedUrl } from '../utils/tabMessenger';
 
 export const PopupApp: React.FC = () => {
   const [agents, setAgents] = useState<CanonicalAgent[]>(DEFAULT_AGENTS);
   const [activeAgentId, setActiveAgentId] = useState<string>('narrator');
   const [hasApiKey, setHasApiKey] = useState<boolean>(false);
   const [statusMessage, setStatusMessage] = useState<string>('Pronto');
+  const [tabWarning, setTabWarning] = useState<string | null>(null);
 
   useEffect(() => {
     // Carrega dados iniciais do storage
@@ -26,6 +28,13 @@ export const PopupApp: React.FC = () => {
         setAgents([...DEFAULT_AGENTS, ...state.agents.customAgents]);
       }
     });
+
+    // Checa se a aba ativa é restrita
+    chrome.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
+      if (tab && isRestrictedUrl(tab.url)) {
+        setTabWarning('Aba do sistema ou protegida (chrome://). Navegue para um site (ex: google.com) para usar.');
+      }
+    }).catch(() => {});
 
     // Inscreve-se para mudanças de storage
     const unsubKey = chromeStorage.subscribe('api', (api) => {
@@ -48,32 +57,44 @@ export const PopupApp: React.FC = () => {
 
   const handleReadSelection = async () => {
     setStatusMessage('Enviando leitura...');
+    setTabWarning(null);
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (tab?.id) {
-      chrome.tabs.sendMessage(tab.id, {
+      const res = await sendTabMessageSafe(tab.id, tab.url, {
         type: 'CMD_READ_SELECTION',
         payload: { agentId: activeAgentId },
       });
+      if (!res.success && res.error) {
+        setTabWarning(res.error);
+      }
     }
     setTimeout(() => setStatusMessage('Pronto'), 1500);
   };
 
   const handleStartDictation = async () => {
     setStatusMessage('Iniciando ditado...');
+    setTabWarning(null);
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (tab?.id) {
-      chrome.tabs.sendMessage(tab.id, {
+      const res = await sendTabMessageSafe(tab.id, tab.url, {
         type: 'CMD_START_DICTATION',
         payload: { agentId: activeAgentId },
       });
+      if (!res.success && res.error) {
+        setTabWarning(res.error);
+      }
     }
     setTimeout(() => setStatusMessage('Pronto'), 1500);
   };
 
   const handleOpenLens = async () => {
+    setTabWarning(null);
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (tab?.id) {
-      chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_HUD' });
+      const res = await sendTabMessageSafe(tab.id, tab.url, { type: 'TOGGLE_HUD' });
+      if (!res.success && res.error) {
+        setTabWarning(res.error);
+      }
     }
   };
 
@@ -114,7 +135,7 @@ export const PopupApp: React.FC = () => {
             border: '1px solid rgba(239, 68, 68, 0.3)',
             borderRadius: 8,
             padding: '8px 10px',
-            marginBottom: 12,
+            marginBottom: 10,
             fontSize: 11,
             color: '#fca5a5',
             cursor: 'pointer',
@@ -125,6 +146,27 @@ export const PopupApp: React.FC = () => {
         >
           <AlertCircle size={14} />
           <span>Chave Gemini ausente. Clique para configurar.</span>
+        </div>
+      )}
+
+      {/* Aviso de Aba Restrita / Recarregamento */}
+      {tabWarning && (
+        <div
+          style={{
+            background: 'rgba(245, 158, 11, 0.15)',
+            border: '1px solid rgba(245, 158, 11, 0.3)',
+            borderRadius: 8,
+            padding: '8px 10px',
+            marginBottom: 12,
+            fontSize: 11,
+            color: '#fcd34d',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+          }}
+        >
+          <AlertCircle size={14} />
+          <span>{tabWarning}</span>
         </div>
       )}
 

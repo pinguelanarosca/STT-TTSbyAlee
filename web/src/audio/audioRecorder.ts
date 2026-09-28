@@ -34,8 +34,8 @@ export class AudioRecorder {
         const reader = new FileReader();
         reader.onloadend = () => {
           const res = reader.result as string;
-          const base64 = res.replace(/^data:[a-z0-9/]+;base64,/, '');
-          resolve({ blob, base64, mimeType: blob.type });
+          const base64 = res.includes(',') ? res.split(',')[1] : res;
+          resolve({ blob, base64, mimeType: blob.type.split(';')[0] || 'audio/webm' });
         };
         reader.onerror = reject;
         reader.readAsDataURL(blob);

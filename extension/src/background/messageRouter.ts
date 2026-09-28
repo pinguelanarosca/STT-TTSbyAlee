@@ -46,19 +46,6 @@ export async function handleExtensionMessage(
           apiSettings.apiKey
         );
 
-        // Se o sender for uma aba, encaminha o áudio de volta
-        if (sender.tab?.id) {
-          chrome.tabs.sendMessage(sender.tab.id, {
-            type: 'TTS_AUDIO_READY',
-            payload: {
-              audioBase64: result.audioBase64,
-              mimeType: result.mimeType,
-              sampleRate: result.sampleRate,
-              durationMs: 0,
-            },
-          });
-        }
-
         return { success: true, data: result };
       }
 

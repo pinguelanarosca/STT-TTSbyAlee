@@ -3,19 +3,22 @@
  * SPDX-License-Identifier: Apache-2.0
  * 
  * Controlador de Text-to-Speech (TTS) no Content Script.
- * Gerencia filas, chunking de textos extensos, reprodução e eventos de controle.
+ * Gerencia filas, chunking de textos extensos, reprodução com Blob URLs e eventos de controle.
  */
 
 import { splitTextIntoChunks } from '@shared/utils/textCleaner';
+import { base64ToUint8Array } from '@shared/utils/pcmWav';
 import { hud } from '../ui/hudController';
 
 export class TtsController {
   private audio: HTMLAudioElement | null = null;
+  private currentObjectUrl: string | null = null;
   private queue: string[] = [];
   private currentChunkIndex = 0;
   private isPaused = false;
   private volume = 1.0;
   private playbackRate = 1.0;
+  private activeAgentId?: string;
 
   constructor() {
     this.audio = new Audio();
@@ -40,15 +43,16 @@ export class TtsController {
     this.stop();
     if (!text || !text.trim()) return;
 
-    // Divide textos extensos em blocos de até 800 caracteres
-    this.queue = splitTextIntoChunks(text, 800);
+    this.activeAgentId = agentId;
+    // Divide textos extensos em blocos de até 600 caracteres para resposta instantânea
+    this.queue = splitTextIntoChunks(text, 600);
     this.currentChunkIndex = 0;
 
     hud.show();
     hud.setStatus('loading', 'Sintetizando');
     hud.setTextPreview(this.queue[0]);
 
-    await this.requestAndPlayChunk(this.queue[0], agentId);
+    await this.requestAndPlayChunk(this.queue[0], this.activeAgentId);
   }
 
   private async requestAndPlayChunk(chunkText: string, agentId?: string): Promise<void> {
@@ -56,13 +60,19 @@ export class TtsController {
       chrome.runtime.sendMessage(
         {
           type: 'TTS_REQUEST',
-          payload: { text: chunkText, agentId },
+          payload: { text: chunkText, agentId: agentId || this.activeAgentId },
         },
         (response) => {
+          if (chrome.runtime.lastError) {
+            console.error('[TTS Controller] Erro de runtime:', chrome.runtime.lastError.message);
+            hud.setStatus('idle', 'Erro de conexão');
+            return;
+          }
+
           if (!response || !response.success || !response.data?.audioBase64) {
             const err = response?.error || 'Falha na resposta do Service Worker';
             console.error('[TTS Controller]', err);
-            hud.setStatus('idle', 'Erro TTS');
+            hud.setStatus('idle', err.includes('Chave') ? 'Configure a Chave' : 'Erro TTS');
             return;
           }
 
@@ -77,21 +87,36 @@ export class TtsController {
   }
 
   public playBase64Audio(base64: string, mimeType: string = 'audio/wav'): void {
-    if (!this.audio) return;
+    if (!this.audio || !base64) return;
 
-    const dataUri = `data:${mimeType};base64,${base64}`;
-    this.audio.src = dataUri;
-    this.audio.volume = this.volume;
-    this.audio.playbackRate = this.playbackRate;
+    if (this.currentObjectUrl) {
+      URL.revokeObjectURL(this.currentObjectUrl);
+      this.currentObjectUrl = null;
+    }
 
-    this.audio.play()
-      .then(() => {
-        hud.setPlayingState(true);
-      })
-      .catch((err) => {
-        console.warn('[TTS Controller] Auto-play bloqueado pelo navegador:', err);
-        hud.setPlayingState(false);
-      });
+    try {
+      const rawBytes = base64ToUint8Array(base64);
+      const arrayBuffer = rawBytes.buffer.slice(rawBytes.byteOffset, rawBytes.byteOffset + rawBytes.byteLength) as ArrayBuffer;
+      const blob = new Blob([arrayBuffer], { type: mimeType });
+      this.currentObjectUrl = URL.createObjectURL(blob);
+
+      this.audio.src = this.currentObjectUrl;
+      this.audio.volume = this.volume;
+      this.audio.playbackRate = this.playbackRate;
+
+      this.audio.play()
+        .then(() => {
+          hud.setPlayingState(true);
+          hud.setStatus('playing', `Lendo (${this.currentChunkIndex + 1}/${this.queue.length})`);
+        })
+        .catch((err) => {
+          console.warn('[TTS Controller] Auto-play aguardando interação do usuário:', err);
+          hud.setPlayingState(false);
+        });
+    } catch (err) {
+      console.error('[TTS Controller] Falha ao criar Blob de áudio:', err);
+      hud.setStatus('idle', 'Erro de decodificação');
+    }
   }
 
   private playNextChunk(): void {
@@ -100,7 +125,7 @@ export class TtsController {
       const nextText = this.queue[this.currentChunkIndex];
       hud.setStatus('loading', `Parte ${this.currentChunkIndex + 1}/${this.queue.length}`);
       hud.setTextPreview(nextText);
-      this.requestAndPlayChunk(nextText);
+      this.requestAndPlayChunk(nextText, this.activeAgentId);
     } else {
       this.stop();
       hud.setStatus('idle', 'Concluído');
@@ -111,9 +136,10 @@ export class TtsController {
     if (!this.audio || !this.audio.src) return;
 
     if (this.audio.paused) {
-      this.audio.play();
-      this.isPaused = false;
-      hud.setPlayingState(true);
+      this.audio.play().then(() => {
+        this.isPaused = false;
+        hud.setPlayingState(true);
+      }).catch(console.error);
     } else {
       this.audio.pause();
       this.isPaused = true;
@@ -125,6 +151,10 @@ export class TtsController {
     if (this.audio) {
       this.audio.pause();
       this.audio.src = '';
+    }
+    if (this.currentObjectUrl) {
+      URL.revokeObjectURL(this.currentObjectUrl);
+      this.currentObjectUrl = null;
     }
     this.queue = [];
     this.currentChunkIndex = 0;

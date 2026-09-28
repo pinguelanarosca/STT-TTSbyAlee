@@ -5,6 +5,8 @@
  * Gerenciador de atalhos de teclado (chrome.commands) no Service Worker.
  */
 
+import { sendTabMessageSafe } from '../utils/tabMessenger';
+
 export function registerCommandHandlers(): void {
   chrome.commands.onCommand.addListener(async (command: string) => {
     const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -12,15 +14,15 @@ export function registerCommandHandlers(): void {
 
     switch (command) {
       case 'read_selection':
-        chrome.tabs.sendMessage(activeTab.id, { type: 'CMD_READ_SELECTION' });
+        await sendTabMessageSafe(activeTab.id, activeTab.url, { type: 'CMD_READ_SELECTION' });
         break;
 
       case 'start_dictation':
-        chrome.tabs.sendMessage(activeTab.id, { type: 'CMD_START_DICTATION' });
+        await sendTabMessageSafe(activeTab.id, activeTab.url, { type: 'CMD_START_DICTATION' });
         break;
 
       case 'toggle_hud':
-        chrome.tabs.sendMessage(activeTab.id, { type: 'TOGGLE_HUD' });
+        await sendTabMessageSafe(activeTab.id, activeTab.url, { type: 'TOGGLE_HUD' });
         break;
 
       default:

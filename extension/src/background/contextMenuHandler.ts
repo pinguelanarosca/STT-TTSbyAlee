@@ -5,6 +5,8 @@
  * Gerenciador de Menus de Contexto (botão direito) no Service Worker.
  */
 
+import { sendTabMessageSafe } from '../utils/tabMessenger';
+
 export function setupContextMenus(): void {
   chrome.runtime.onInstalled.addListener(() => {
     chrome.contextMenus.removeAll(() => {
@@ -34,33 +36,33 @@ export function setupContextMenus(): void {
     });
   });
 
-  chrome.contextMenus.onClicked.addListener((info, tab) => {
+  chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     if (!tab || !tab.id) return;
 
     switch (info.menuItemId) {
       case 'read_selection_menu':
-        chrome.tabs.sendMessage(tab.id, {
+        await sendTabMessageSafe(tab.id, tab.url, {
           type: 'CMD_READ_SELECTION',
           payload: { text: info.selectionText },
         });
         break;
 
       case 'translate_selection_menu':
-        chrome.tabs.sendMessage(tab.id, {
+        await sendTabMessageSafe(tab.id, tab.url, {
           type: 'CMD_READ_SELECTION',
           payload: { text: info.selectionText, agentId: 'translator' },
         });
         break;
 
       case 'summarize_selection_menu':
-        chrome.tabs.sendMessage(tab.id, {
+        await sendTabMessageSafe(tab.id, tab.url, {
           type: 'CMD_READ_SELECTION',
           payload: { text: info.selectionText, agentId: 'summarizer' },
         });
         break;
 
       case 'dictate_menu':
-        chrome.tabs.sendMessage(tab.id, {
+        await sendTabMessageSafe(tab.id, tab.url, {
           type: 'CMD_START_DICTATION',
         });
         break;

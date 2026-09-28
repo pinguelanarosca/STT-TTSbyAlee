@@ -2,20 +2,30 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  * 
- * Funções matemáticas e binárias puras de processamento PCM e WAV.
+ * Funções matemáticas e binárias puras de processamento PCM e WAV de alta performance.
  * 100% agnóstico de ambiente (Zero DOM, Zero AudioContext, Zero Node.js fs).
+ * Implementado com processamento em blocos (chunking) para evitar travamento da main thread.
  */
 
 import { AudioMetadata } from '../types/audio';
 
 /**
- * Converte base64 string para Uint8Array de forma agnóstica e segura.
+ * Converte base64 string para Uint8Array de forma ultra-rápida e segura.
  */
 export function base64ToUint8Array(base64: string): Uint8Array {
-  // Limpeza de possíveis quebras de linha ou prefixos de data URI
-  const cleanBase64 = base64.replace(/^data:audio\/[a-z0-9]+;base64,/, '').replace(/\s/g, '');
-  
-  // Suporte universal (Browser, Service Worker, Node)
+  // Limpeza robusta de qualquer prefixo data URI (ex: data:audio/webm;codecs=opus;base64,)
+  let cleanBase64 = base64.trim();
+  if (cleanBase64.includes(',')) {
+    cleanBase64 = cleanBase64.split(',')[1];
+  }
+  cleanBase64 = cleanBase64.replace(/\s/g, '');
+
+  if (typeof Buffer !== 'undefined') {
+    const buf = Buffer.from(cleanBase64, 'base64');
+    return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+  }
+
+  // Suporte em Browser / Service Worker via atob nativo com TypedArray
   if (typeof atob === 'function') {
     const binaryString = atob(cleanBase64);
     const len = binaryString.length;
@@ -25,14 +35,14 @@ export function base64ToUint8Array(base64: string): Uint8Array {
     }
     return bytes;
   }
-  
-  // Fallback para ambientes sem atob nativo
+
+  // Fallback puro para ambientes restritos sem atob/Buffer
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
   const lookup = new Uint8Array(256);
   for (let i = 0; i < chars.length; i++) {
     lookup[chars.charCodeAt(i)] = i;
   }
-  
+
   let bufferLength = cleanBase64.length * 0.75;
   if (cleanBase64[cleanBase64.length - 1] === '=') {
     bufferLength--;
@@ -62,16 +72,23 @@ export function base64ToUint8Array(base64: string): Uint8Array {
 }
 
 /**
- * Converte Uint8Array para base64 string de forma agnóstica.
+ * Converte Uint8Array para base64 string de alta velocidade sem travamento de loop.
  */
 export function uint8ArrayToBase64(bytes: Uint8Array): string {
+  if (typeof Buffer !== 'undefined') {
+    return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('base64');
+  }
+
   if (typeof btoa === 'function') {
-    let binary = '';
-    const len = bytes.byteLength;
-    for (let i = 0; i < len; i++) {
-      binary += String.fromCharCode(bytes[i]);
+    const CHUNK_SIZE = 8192;
+    const chunks: string[] = [];
+    const len = bytes.length;
+    for (let i = 0; i < len; i += CHUNK_SIZE) {
+      const end = Math.min(i + CHUNK_SIZE, len);
+      const sub = bytes.subarray(i, end);
+      chunks.push(String.fromCharCode(...sub));
     }
-    return btoa(binary);
+    return btoa(chunks.join(''));
   }
 
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
@@ -183,11 +200,11 @@ export function wavToPcm(wavBytes: Uint8Array): {
   metadata: AudioMetadata;
 } {
   const view = new DataView(wavBytes.buffer, wavBytes.byteOffset, wavBytes.byteLength);
-  
+
   // Validar "RIFF" e "WAVE"
   const isRiff = wavBytes[0] === 0x52 && wavBytes[1] === 0x49 && wavBytes[2] === 0x46 && wavBytes[3] === 0x46;
   const isWave = wavBytes[8] === 0x57 && wavBytes[9] === 0x41 && wavBytes[10] === 0x56 && wavBytes[11] === 0x45;
-  
+
   if (!isRiff || !isWave) {
     throw new Error('Arquivo fornecido não é um container WAV válido.');
   }

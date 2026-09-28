@@ -15,7 +15,7 @@ import {
   FLASH_LITE_MODELS_WHITELIST,
   STT_UNARY_MODELS_WHITELIST,
 } from '@shared/constants/modelsCatalog';
-import { base64ToUint8Array, pcmToWav, uint8ArrayToBase64 } from '@shared/utils/pcmWav';
+import { base64ToUint8Array, pcmToWav, uint8ArrayToBase64, wavToPcm } from '@shared/utils/pcmWav';
 
 const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
 
@@ -82,11 +82,19 @@ export class GeminiDirectClient {
         const rawBytes = base64ToUint8Array(rawBase64);
         let finalBase64 = rawBase64;
 
-        // Se o áudio for PCM Linear puro sem cabeçalho RIFF, encapsula em WAV 24kHz
-        const isWav = rawBytes.length > 4 && rawBytes[0] === 0x52 && rawBytes[1] === 0x49 && rawBytes[2] === 0x46 && rawBytes[3] === 0x46;
-        if (!isWav) {
-          const wavBytes = pcmToWav(rawBytes, 24000, 1, 16);
-          finalBase64 = uint8ArrayToBase64(wavBytes);
+        try {
+          const isWav = rawBytes.length > 4 && rawBytes[0] === 0x52 && rawBytes[1] === 0x49 && rawBytes[2] === 0x46 && rawBytes[3] === 0x46;
+          if (isWav) {
+            const { pcmData, metadata } = wavToPcm(rawBytes);
+            const cleanWav = pcmToWav(pcmData, metadata.sampleRate || 24000, metadata.channels || 1, metadata.bitDepth || 16);
+            finalBase64 = uint8ArrayToBase64(cleanWav);
+          } else {
+            const cleanWav = pcmToWav(rawBytes, 24000, 1, 16);
+            finalBase64 = uint8ArrayToBase64(cleanWav);
+          }
+        } catch {
+          const cleanWav = pcmToWav(rawBytes, 24000, 1, 16);
+          finalBase64 = uint8ArrayToBase64(cleanWav);
         }
 
         return {
