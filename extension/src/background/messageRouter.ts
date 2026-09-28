@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  * 
  * Roteador de mensagens tipado da Extensão Chrome (Service Worker).
- * Despacha requisições entre Content Script, Popup e Options.
+ * Despacha requisições entre Content Script, Popup e Options com suporte a cancelamento de TTS.
  */
 
 import { AnyExtensionMessage, ExtensionResponse } from '@shared/types/messages';
@@ -11,6 +11,9 @@ import { getCanonicalAgent } from '@shared/constants/defaultAgents';
 import { chromeStorage } from '../services/storage/chromeStorageAdapter';
 import { geminiDirectClient } from '../services/geminiDirectClient';
 import { captureAndAnalyzeTab } from './tabCaptureHandler';
+
+// Controlador de cancelamento para requisições de TTS ativas no background
+let activeTtsAbortController: AbortController | null = null;
 
 export async function handleExtensionMessage(
   message: AnyExtensionMessage,
@@ -20,6 +23,18 @@ export async function handleExtensionMessage(
     switch (message.type) {
       case 'TTS_REQUEST': {
         const { text, agentId, voiceName } = message.payload;
+        if (!text || !text.trim()) {
+          return { success: false, error: 'Texto não informado para síntese.' };
+        }
+
+        // Se houver uma requisição anterior ainda rodando no background, cancela
+        if (activeTtsAbortController) {
+          activeTtsAbortController.abort('Nova requisição iniciada.');
+        }
+
+        const currentController = new AbortController();
+        activeTtsAbortController = currentController;
+
         const apiSettings = await chromeStorage.get('api');
         if (!apiSettings.apiKey) {
           return { success: false, error: 'Chave de API Gemini não configurada. Abra as opções para configurar.' };
@@ -34,19 +49,38 @@ export async function handleExtensionMessage(
         const ttsModelId = agent.modelPreferences.ttsModelId || modelsSettings.ttsModelId;
         const voice = voiceName || agent.voice.preferredVoice || audioSettings.preferredVoice;
 
-        const result = await geminiDirectClient.synthesizeSpeech(
-          {
-            text,
-            voiceName: voice,
-            rateMultiplier: agent.voice.rateMultiplier,
-            pitchMultiplier: agent.voice.pitchMultiplier,
-            systemInstruction: agent.instructions.ttsSystemInstruction,
-            modelId: ttsModelId,
-          },
-          apiSettings.apiKey
-        );
+        console.log(`[TTS Router] Iniciando TTS para "${text.length > 30 ? text.substring(0, 30) + '...' : text}" com preferência ${ttsModelId}`);
 
-        return { success: true, data: result };
+        try {
+          const result = await geminiDirectClient.synthesizeSpeech(
+            {
+              text,
+              voiceName: voice,
+              rateMultiplier: agent.voice.rateMultiplier,
+              pitchMultiplier: agent.voice.pitchMultiplier,
+              systemInstruction: agent.instructions.ttsSystemInstruction,
+              modelId: ttsModelId,
+            },
+            apiSettings.apiKey,
+            currentController.signal
+          );
+
+          console.log(`[TTS Router] Síntese finalizada com sucesso! Modelo utilizado: ${result.modelUsed}`);
+          return { success: true, data: result };
+        } finally {
+          if (activeTtsAbortController === currentController) {
+            activeTtsAbortController = null;
+          }
+        }
+      }
+
+      case 'TTS_STOP': {
+        if (activeTtsAbortController) {
+          console.log('[TTS Router] Recebido TTS_STOP: abortando requisição ativa.');
+          activeTtsAbortController.abort('Interrompido por TTS_STOP');
+          activeTtsAbortController = null;
+        }
+        return { success: true };
       }
 
       case 'STT_TRANSCRIBE_REQUEST': {
@@ -129,6 +163,7 @@ export async function handleExtensionMessage(
     }
   } catch (err) {
     const messageStr = err instanceof Error ? err.message : String(err);
+    console.error('[MessageRouter] Erro no processamento da mensagem:', messageStr);
     return { success: false, error: messageStr };
   }
 }
