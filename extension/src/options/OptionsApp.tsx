@@ -303,7 +303,7 @@ export const OptionsApp: React.FC = () => {
                   audioBase64: base64Audio,
                   mimeType: 'audio/webm',
                   formattingInstruction: agentForm.instructions.sttFormattingInstruction,
-                  modelId: agentForm.modelPreferences.sttModelId || 'gemini-3.5-transcribe',
+                  modelId: agentForm.modelPreferences.sttModelId || 'gemini-3.5-flash-lite',
                 },
                 storageState!.api.apiKey
               );
@@ -1099,13 +1099,13 @@ export const OptionsApp: React.FC = () => {
                 </span>
               </div>
 
-              {/* Modelo STT Unary */}
+              {/* Modelo STT */}
               <div>
                 <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#cbd5e1', marginBottom: 4 }}>
                   Modelo STT (Transcrição de Áudio):
                 </label>
                 <select
-                  value={agentForm.modelPreferences.sttModelId || 'gemini-3.5-transcribe'}
+                  value={agentForm.modelPreferences.sttModelId || 'gemini-3.5-flash-lite'}
                   onChange={(e) =>
                     setAgentForm({
                       ...agentForm,
@@ -1114,12 +1114,12 @@ export const OptionsApp: React.FC = () => {
                   }
                   style={{ width: '100%', background: '#1e293b', border: '1px solid #334155', borderRadius: 8, color: '#f8fafc', padding: '10px 12px', fontSize: 13, boxSizing: 'border-box' }}
                 >
-                  {TASK_FALLBACK_CHAINS.stt_unary.map((m) => (
+                  {TASK_FALLBACK_CHAINS.stt.map((m) => (
                     <option key={m} value={m}>{KNOWN_MODELS[m]?.displayName || m}</option>
                   ))}
                 </select>
                 <span style={{ fontSize: 11, color: '#64748b', marginTop: 4, display: 'block' }}>
-                  {KNOWN_MODELS[agentForm.modelPreferences.sttModelId || 'gemini-3.5-transcribe']?.description}
+                  {KNOWN_MODELS[agentForm.modelPreferences.sttModelId || 'gemini-3.5-flash-lite']?.description}
                 </span>
               </div>
 

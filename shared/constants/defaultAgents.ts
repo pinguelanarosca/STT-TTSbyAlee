@@ -5,7 +5,7 @@
  * Fonte Única de Verdade (SSOT) para os 8 Agentes Padrão Reais do Sistema.
  * Preserva integralmente os 8 agentes originais com seus IDs legítimos,
  * nomes, descrições, vozes e instruções por modalidade (TTS, STT, Lens).
- * Modelos preferidos alinhados com o catálogo oficial atual da API Gemini.
+ * Modelos preferidos alinhados com o catálogo oficial congelado da API Gemini.
  */
 
 import { CanonicalAgent } from '../types/agent';
@@ -41,7 +41,7 @@ export const DEFAULT_AGENTS: CanonicalAgent[] = [
     },
     modelPreferences: {
       ttsModelId: 'gemini-3.8-flash-lite-tts',
-      sttModelId: 'gemini-3.5-transcribe',
+      sttModelId: 'gemini-3.5-flash-lite',
     },
   },
   {
@@ -74,7 +74,7 @@ export const DEFAULT_AGENTS: CanonicalAgent[] = [
     },
     modelPreferences: {
       ttsModelId: 'gemini-3.8-flash-lite-tts',
-      sttModelId: 'gemini-3.5-transcribe',
+      sttModelId: 'gemini-3.5-flash-lite',
     },
   },
   {
@@ -105,7 +105,7 @@ export const DEFAULT_AGENTS: CanonicalAgent[] = [
     },
     modelPreferences: {
       ttsModelId: 'gemini-3.8-flash-lite-tts',
-      sttModelId: 'gemini-3.5-transcribe',
+      sttModelId: 'gemini-3.5-flash-lite',
     },
   },
   {
@@ -137,7 +137,7 @@ export const DEFAULT_AGENTS: CanonicalAgent[] = [
     },
     modelPreferences: {
       ttsModelId: 'gemini-3.8-flash-lite-tts',
-      sttModelId: 'gemini-3.5-transcribe',
+      sttModelId: 'gemini-3.5-flash-lite',
     },
   },
   {
@@ -168,7 +168,7 @@ export const DEFAULT_AGENTS: CanonicalAgent[] = [
     },
     modelPreferences: {
       ttsModelId: 'gemini-3.8-flash-lite-tts',
-      sttModelId: 'gemini-3.5-transcribe',
+      sttModelId: 'gemini-3.5-flash-lite',
     },
   },
   {
@@ -200,7 +200,7 @@ export const DEFAULT_AGENTS: CanonicalAgent[] = [
     },
     modelPreferences: {
       ttsModelId: 'gemini-3.8-flash-lite-tts',
-      sttModelId: 'gemini-3.5-transcribe',
+      sttModelId: 'gemini-3.5-flash-lite',
     },
   },
   {
@@ -230,8 +230,8 @@ export const DEFAULT_AGENTS: CanonicalAgent[] = [
         'Comente os elementos visuais da página como se estivesse apresentando uma transmissão ao vivo com seus ouvintes.',
     },
     modelPreferences: {
-      ttsModelId: 'gemini-3.8-flash-tts', // Modelo flagship com suporte a backchanneling e diálogos
-      sttModelId: 'gemini-3.5-transcribe',
+      ttsModelId: 'gemini-3.8-flash-tts',
+      sttModelId: 'gemini-3.5-flash-lite',
     },
   },
   {
@@ -262,19 +262,14 @@ export const DEFAULT_AGENTS: CanonicalAgent[] = [
     },
     modelPreferences: {
       ttsModelId: 'gemini-3.8-flash-lite-tts',
-      sttModelId: 'gemini-3.5-transcribe',
+      sttModelId: 'gemini-3.5-flash-lite',
     },
   },
 ];
 
 export const DEFAULT_AGENT_ID = 'narrator';
 
-/**
- * Mapa de retrocompatibilidade para IDs antigos/legados encontrados no código original
- * ou salvos em chrome.storage.local/localStorage dos usuários.
- */
 export const AGENT_ID_ALIASES: Record<string, string> = {
-  // Aliases em português
   'narrador': 'narrator',
   'tradutor': 'translator',
   'resumidor': 'summarizer',
@@ -285,7 +280,6 @@ export const AGENT_ID_ALIASES: Record<string, string> = {
   'desenvolvedor': 'developer',
   'conversacional': 'podcast',
   'acessibilidade': 'accessibility',
-  // Aliases com sufixo do Web Studio anterior
   'narrator-fluid': 'narrator',
   'translator-polyglot': 'translator',
   'summarizer-exec': 'summarizer',
@@ -293,9 +287,6 @@ export const AGENT_ID_ALIASES: Record<string, string> = {
   'accessibility-lens': 'accessibility',
 };
 
-/**
- * Resolve qualquer ID bruto (legado ou alternativo) para o ID canônico correspondente.
- */
 export function resolveCanonicalAgentId(rawId: string | undefined | null): string {
   if (!rawId || typeof rawId !== 'string') return DEFAULT_AGENT_ID;
   const trimmed = rawId.trim();
@@ -306,9 +297,6 @@ export function resolveCanonicalAgentId(rawId: string | undefined | null): strin
   return found ? found.metadata.id : DEFAULT_AGENT_ID;
 }
 
-/**
- * Retorna o agente canônico por ID, resolvendo aliases automaticamente.
- */
 export function getCanonicalAgent(idOrAlias: string | undefined | null): CanonicalAgent {
   const canonicalId = resolveCanonicalAgentId(idOrAlias);
   return DEFAULT_AGENTS.find(a => a.metadata.id === canonicalId) || DEFAULT_AGENTS[0];

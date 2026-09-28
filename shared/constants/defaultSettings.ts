@@ -41,8 +41,8 @@ export const DEFAULT_AUDIO_SETTINGS: AudioSettingsSchema = {
 export const DEFAULT_MODELS_SETTINGS: ModelsSettingsSchema = {
   ttsModelId: getFallbackModelForTask('tts'),      // gemini-3.8-flash-lite-tts
   sttModelId: getFallbackModelForTask('stt'),      // gemini-3.5-transcribe
-  visionModelId: getFallbackModelForTask('vision'), // gemini-3.8-flash
-  generalModelId: getFallbackModelForTask('general'), // gemini-3.8-flash
+  visionModelId: getFallbackModelForTask('vision'), // gemini-3.1-flash-lite
+  generalModelId: getFallbackModelForTask('general'), // gemini-3.1-flash-lite
   discoveredModels: [],
   discoveryCacheTimestamp: undefined,
 };
@@ -72,6 +72,8 @@ export const DEFAULT_STORAGE_STATE: AppStorageSchema = {
   ui: DEFAULT_UI_PREFERENCES,
   history: DEFAULT_HISTORY_SETTINGS,
 };
+
+export const DEFAULT_APP_STORAGE = DEFAULT_STORAGE_STATE;
 
 /**
  * Função pura de migração para transformar dados brutos e desestruturados

@@ -2,12 +2,12 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  * 
- * Model Explorer: Catálogo Oficial, Capacidades e Descoberta em Runtime.
+ * Model Explorer: Catálogo Oficial Congelado e Matriz de Capacidades.
  */
 
 import React, { useState, useEffect } from 'react';
-import { Cpu, RefreshCw, CheckCircle2, AlertOctagon, Sparkles, Filter, MapPin } from 'lucide-react';
-import { KNOWN_MODELS, TTS_MODELS_WHITELIST, FLASH_LITE_MODELS_WHITELIST, STT_UNARY_MODELS_WHITELIST, STT_LIVE_MODELS_WHITELIST } from '@shared/constants/modelsCatalog';
+import { Cpu, RefreshCw, Sparkles, Filter, MapPin } from 'lucide-react';
+import { KNOWN_MODELS, TTS_MODELS_WHITELIST, STT_GENERAL_MODELS_WHITELIST } from '@shared/constants/modelsCatalog';
 import { DiscoveredModelInfo } from '@shared/types/models';
 import { geminiApi } from '../../services/geminiApiClient';
 
@@ -41,9 +41,9 @@ export const ModelExplorer: React.FC = () => {
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-bold text-slate-100">Explorador de Modelos Gemini (Whitelist Estrita)</h2>
+          <h2 className="text-lg font-bold text-slate-100">Explorador de Modelos Gemini (Catálogo Congelado)</h2>
           <p className="text-xs text-slate-400 mt-1">
-            Matriz de capacidades e modelos homologados por protocolo: TTS nativo, STT Unary, Visão Flash-Lite.
+            Matriz de capacidades e modelos homologados: 4 modelos TTS e 2 modelos STT/Gerais (Flash-Lite).
           </p>
         </div>
 
@@ -53,7 +53,7 @@ export const ModelExplorer: React.FC = () => {
           className="flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700 transition cursor-pointer"
         >
           <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
-          <span>{isLoading ? 'Consultando API...' : 'Atualizar Descoberta'}</span>
+          <span>{isLoading ? 'Consultando Status...' : 'Verificar Status na API'}</span>
         </button>
       </div>
 
@@ -61,9 +61,9 @@ export const ModelExplorer: React.FC = () => {
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-lg">
         <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-2">
           <Sparkles className="w-3.5 h-3.5 text-blue-400" />
-          <span>Cadeias Oficiais de Fallback por Tarefa (Zero Cross-Category & Zero-Retry)</span>
+          <span>Cadeias Oficiais de Fallback por Tarefa (Zero-Retry)</span>
         </h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800">
             <span className="text-[10px] text-blue-400 font-semibold block uppercase">TTS (Ordem Estrita 1 a 4)</span>
             <div className="text-xs text-slate-200 font-mono mt-1 space-y-0.5">
@@ -77,24 +77,16 @@ export const ModelExplorer: React.FC = () => {
           </div>
 
           <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800">
-            <span className="text-[10px] text-red-400 font-semibold block uppercase">STT (Transcrição de Voz)</span>
-            <div className="text-xs text-slate-200 font-mono mt-1 space-y-1">
-              <div>Unary: <span className="text-slate-300">Gemini 3.5 Transcribe</span></div>
-              <div>Live: <span className="text-slate-300">Gemini 3.5 Transcribe Live</span></div>
-              <span className="text-[10px] text-slate-500 mt-1 block">Regra: sttModelId !== ttsModelId</span>
-            </div>
-          </div>
-
-          <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800">
-            <span className="text-[10px] text-emerald-400 font-semibold block uppercase">Flash-Lite / Vision / Auth (1 a 3)</span>
+            <span className="text-[10px] text-emerald-400 font-semibold block uppercase">STT / Geral / Visão / Auth (Ordem Estrita 1 a 2)</span>
             <div className="text-xs text-slate-200 font-mono mt-1 space-y-0.5">
-              {FLASH_LITE_MODELS_WHITELIST.map((id, idx) => (
+              {STT_GENERAL_MODELS_WHITELIST.map((id, idx) => (
                 <div key={id} className="flex items-center gap-1.5">
                   <span className="text-slate-500">{idx + 1}.</span>
                   <span>{KNOWN_MODELS[id]?.displayName || id}</span>
                 </div>
               ))}
             </div>
+            <span className="text-[10px] text-slate-500 mt-2 block">Regra: sttModelId !== ttsModelId | Teste Chave: gemini-3.1-flash-lite</span>
           </div>
         </div>
       </div>
@@ -105,10 +97,9 @@ export const ModelExplorer: React.FC = () => {
         <span className="text-xs text-slate-400 font-medium">Filtrar Categoria:</span>
         <div className="flex gap-1.5 overflow-x-auto">
           {[
-            { id: 'all', label: 'Todos' },
-            { id: 'tts', label: 'TTS' },
-            { id: 'stt_transcription', label: 'STT' },
-            { id: 'general_multimodal', label: 'Flash-Lite / Visão' },
+            { id: 'all', label: 'Todos (6)' },
+            { id: 'tts', label: 'TTS (4)' },
+            { id: 'general_multimodal', label: 'STT / Geral / Flash-Lite (2)' },
           ].map((cat) => (
             <button
               key={cat.id}

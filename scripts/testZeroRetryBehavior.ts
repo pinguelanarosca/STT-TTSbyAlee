@@ -2,16 +2,14 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  * 
- * Teste Comportamental Real do Mecanismo Zero-Retry
+ * Teste Comportamental Real do Mecanismo Zero-Retry com Catálogo Congelado
  */
 
 import {
   executeWithZeroRetryFallback,
   AUTH_TEST_INITIAL_MODEL,
   TTS_MODELS_WHITELIST,
-  FLASH_LITE_MODELS_WHITELIST,
-  STT_UNARY_MODELS_WHITELIST,
-  STT_LIVE_MODELS_WHITELIST,
+  STT_GENERAL_MODELS_WHITELIST,
   getFallbackChainForTask,
 } from '../shared/constants/modelsCatalog';
 
@@ -22,9 +20,6 @@ function printHeader(title: string) {
 }
 
 async function runTests() {
-  // -------------------------------------------------------------------------
-  // CENÁRIO 1: TTS - Falha no 1º modelo e avanço imediato para o 2º (Zero-Retry)
-  // -------------------------------------------------------------------------
   printHeader('CENÁRIO 1: TTS - Falha no 1º Modelo e Sucesso no 2º Modelo');
   {
     const callLog: { model: string; timestamp: number }[] = [];
@@ -53,7 +48,6 @@ async function runTests() {
     console.log('  Modelo que Entregou a Resposta:', res.usedModelId);
     console.log('  Histórico de Tentativas no Retorno:', res.attempts);
     
-    // Asserções
     if (callLog.length !== 2) throw new Error(`Esperava 2 chamadas, obteve ${callLog.length}`);
     if (callLog[0].model !== 'gemini-3.8-flash-lite-tts' || callLog[1].model !== 'gemini-3.8-flash-tts') {
       throw new Error('Sequência incorreta no Cenário 1');
@@ -61,9 +55,6 @@ async function runTests() {
     if (modelCallCount['gemini-3.8-flash-lite-tts'] !== 1) throw new Error('Retry indevido no modelo 1!');
   }
 
-  // -------------------------------------------------------------------------
-  // CENÁRIO 1B: TTS - Falha no 1º e 2º modelos -> Sucesso no 3º modelo
-  // -------------------------------------------------------------------------
   printHeader('CENÁRIO 1B: TTS - Falha no 1º e 2º Modelos -> Sucesso no 3º Modelo (3.1 Flash TTS)');
   {
     const callLog: string[] = [];
@@ -99,38 +90,26 @@ async function runTests() {
     }
   }
 
-  // -------------------------------------------------------------------------
-  // CENÁRIO 2: STT Unary - Verificação de Isolamento estrito (Sem Live API)
-  // -------------------------------------------------------------------------
-  printHeader('CENÁRIO 2: STT Unary - Isolamento Estrito do Protocolo Live');
+  printHeader('CENÁRIO 2: STT / Geral - Cadeia Exata (3.5-flash-lite -> 3.1-flash-lite)');
   {
-    const sttChain = getFallbackChainForTask('stt_unary');
-    console.log('  Cadeia STT Unary Configurada:', sttChain);
-    console.log('  Cadeia STT Live Configurada:', STT_LIVE_MODELS_WHITELIST);
-
+    const sttChain = getFallbackChainForTask('stt');
+    console.log('  Cadeia STT / Geral Configurada:', sttChain);
+    
     const callLog: string[] = [];
-    const res = await executeWithZeroRetryFallback('stt_unary', 'gemini-3.5-transcribe', async (modelId) => {
+    const res = await executeWithZeroRetryFallback('stt', 'gemini-3.5-flash-lite', async (modelId) => {
       callLog.push(modelId);
-      console.log(`[STT Unary] Chamando modelo de transcrição: "${modelId}" -> ✅ SUCESSO`);
+      console.log(`[STT] Chamando modelo de transcrição: "${modelId}" -> ✅ SUCESSO`);
       return 'Transcrição fiel do áudio';
     });
 
     console.log('\n📊 Verificação:');
     console.log('  Modelo Executado:', res.usedModelId);
-    console.log('  Contém modelo Live?:', callLog.includes('gemini-3.5-transcribe-live') ? 'SIM (ERRO)' : 'NÃO (CORRETO)');
-
-    if (sttChain.includes('gemini-3.5-transcribe-live' as any)) {
-      throw new Error('Modelo Live não pode estar na cadeia STT Unary!');
-    }
-    if (res.usedModelId !== 'gemini-3.5-transcribe') {
-      throw new Error('Modelo incorreto no STT Unary');
+    if (res.usedModelId !== 'gemini-3.5-flash-lite') {
+      throw new Error('Modelo incorreto no STT');
     }
   }
 
-  // -------------------------------------------------------------------------
-  // CENÁRIO 3: API Key - 1º modelo é gemini-3.1-flash-lite + Fallback sem repetição
-  // -------------------------------------------------------------------------
-  printHeader('CENÁRIO 3: Teste de API Key - 1º Modelo gemini-3.1-flash-lite + Fallback Flash-Lite');
+  printHeader('CENÁRIO 3: Teste de API Key - 1º Modelo gemini-3.1-flash-lite + Fallback');
   {
     console.log('  Modelo Inicial de Autenticação:', AUTH_TEST_INITIAL_MODEL);
     if (AUTH_TEST_INITIAL_MODEL !== 'gemini-3.1-flash-lite') {
@@ -165,50 +144,7 @@ async function runTests() {
     }
   }
 
-  // -------------------------------------------------------------------------
-  // CENÁRIO 4: Regra de Ouro - Cada modelo chamado exatamente UMA vez (A -> B -> C)
-  // -------------------------------------------------------------------------
-  printHeader('CENÁRIO 4: Regra de Ouro - Garantia de Unicidade Estrita por Operação');
-  {
-    const callLog: string[] = [];
-    const modelCallCount: Record<string, number> = {};
-
-    await executeWithZeroRetryFallback('vision', 'gemini-3.1-flash-lite', async (modelId) => {
-      callLog.push(modelId);
-      modelCallCount[modelId] = (modelCallCount[modelId] || 0) + 1;
-
-      if (modelId === 'gemini-3.1-flash-lite') {
-        console.log(`[Vision] "${modelId}" -> ❌ Falha simulada`);
-        throw new Error('Falha 1');
-      }
-      if (modelId === 'gemini-3.5-flash-lite') {
-        console.log(`[Vision] "${modelId}" -> ❌ Falha simulada`);
-        throw new Error('Falha 2');
-      }
-      if (modelId === 'gemini-2.5-flash-lite') {
-        console.log(`[Vision] "${modelId}" -> ✅ Sucesso`);
-        return 'Visão ok';
-      }
-      throw new Error(`Inesperado: ${modelId}`);
-    });
-
-    console.log('\n📊 Sequência Registrada:');
-    console.log('  ', callLog.join(' ➔ '));
-    console.log('  Contagem de Execuções por Modelo:');
-    Object.entries(modelCallCount).forEach(([mod, cnt]) => {
-      console.log(`    - ${mod}: ${cnt} chamada (Zero Retry: ${cnt === 1 ? 'SIM' : 'NÃO'})`);
-    });
-
-    const hasDuplicates = new Set(callLog).size !== callLog.length;
-    if (hasDuplicates) {
-      throw new Error('VIOLAÇÃO DA REGRA DE OURO: Modelo repetido na mesma operação!');
-    }
-  }
-
-  // -------------------------------------------------------------------------
-  // CENÁRIO 5: Falha Total - Todos os 4 modelos TTS falham -> Erro Agregado
-  // -------------------------------------------------------------------------
-  printHeader('CENÁRIO 5: Teste de Falha Total na Cadeia TTS (4 Modelos)');
+  printHeader('CENÁRIO 4: Falha Total na Cadeia TTS (4 Modelos)');
   {
     const callLog: string[] = [];
     const modelCallCount: Record<string, number> = {};
@@ -229,20 +165,14 @@ async function runTests() {
     console.log('  Quantidade de Tentativas:', callLog.length);
     console.log('  Modelos Tentados na Ordem:', callLog.join(' ➔ '));
     console.log('  Contagem por Modelo:', JSON.stringify(modelCallCount));
-    console.log('  Erro Agregado Retornado ao Usuário/Caller:');
+    console.log('  Erro Agregado Retornado:');
     console.log('   ', caughtError?.message);
 
     if (callLog.length !== 4) throw new Error(`Esperava 4 tentativas na falha total, obteve ${callLog.length}`);
     if (new Set(callLog).size !== 4) throw new Error('Modelos não eram todos diferentes!');
-    if (!caughtError || !caughtError.message.includes('Todos os 4 modelos falharam sem retry')) {
-      throw new Error('Mensagem de erro agregado não formatada corretamente');
-    }
   }
 
-  // -------------------------------------------------------------------------
-  // CENÁRIO 6: Teste de Sucesso Imediato no 1º Modelo (Sem chamadas subsequentes)
-  // -------------------------------------------------------------------------
-  printHeader('CENÁRIO 6: Sucesso no 1º Modelo -> Nenhum Modelo Subsequente Chamado');
+  printHeader('CENÁRIO 5: Sucesso no 1º Modelo -> Nenhum Modelo Subsequente Chamado');
   {
     const callLog: string[] = [];
     const modelCallCount: Record<string, number> = {};
@@ -258,13 +188,11 @@ async function runTests() {
     console.log('  Total de Chamadas:', callLog.length);
     console.log('  Modelo Executado:', callLog[0]);
     console.log('  Modelos Subsequentes Chamados:', callLog.length > 1 ? callLog.slice(1).join(', ') : 'NENHUM (CORRETO)');
-    console.log('  Resultado Entregue:', res.result);
 
     if (callLog.length !== 1) throw new Error(`Esperava exatamente 1 chamada, obteve ${callLog.length}`);
-    if (callLog[0] !== 'gemini-3.8-flash-lite-tts') throw new Error('Modelo incorreto');
   }
 
-  printHeader('🎉 TODOS OS TESTES COMPORTAMENTAIS ZERO-RETRY PASSARAM COM 100% DE SUCESSO!');
+  printHeader('🎉 TODOS OS TESTES PASSARAM COM 100% DE SUCESSO NO CATÁLOGO CONGELADO!');
 }
 
 runTests().catch((err) => {

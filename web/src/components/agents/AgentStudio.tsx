@@ -297,7 +297,7 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
               <div>
                 <label className="text-xs font-medium text-slate-400 mb-1 block">Modelo STT:</label>
                 <select
-                  value={editingAgent.modelPreferences?.sttModelId || 'gemini-3.5-transcribe'}
+                  value={editingAgent.modelPreferences?.sttModelId || 'gemini-3.5-flash-lite'}
                   onChange={(e) =>
                     setEditingAgent({
                       ...editingAgent,
@@ -306,7 +306,8 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
                   }
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200"
                 >
-                  <option value="gemini-3.5-transcribe">Gemini 3.5 Transcribe</option>
+                  <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite</option>
+                  <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite</option>
                 </select>
               </div>
             </div>
