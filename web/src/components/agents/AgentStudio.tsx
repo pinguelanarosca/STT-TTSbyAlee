@@ -274,6 +274,43 @@ export const AgentStudio: React.FC<AgentStudioProps> = ({
               />
             </div>
 
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs font-medium text-slate-400 mb-1 block">Modelo TTS:</label>
+                <select
+                  value={editingAgent.modelPreferences?.ttsModelId || 'gemini-3.8-flash-lite-tts'}
+                  onChange={(e) =>
+                    setEditingAgent({
+                      ...editingAgent,
+                      modelPreferences: { ...editingAgent.modelPreferences, ttsModelId: e.target.value },
+                    })
+                  }
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200"
+                >
+                  <option value="gemini-3.8-flash-lite-tts">Gemini 3.8 Flash-Lite TTS</option>
+                  <option value="gemini-3.8-flash-tts">Gemini 3.8 Flash TTS</option>
+                  <option value="gemini-3.1-flash-tts-preview">Gemini 3.1 Flash TTS</option>
+                  <option value="gemini-2.5-flash-preview-tts">Gemini 2.5 Flash TTS</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-slate-400 mb-1 block">Modelo STT:</label>
+                <select
+                  value={editingAgent.modelPreferences?.sttModelId || 'gemini-3.5-transcribe'}
+                  onChange={(e) =>
+                    setEditingAgent({
+                      ...editingAgent,
+                      modelPreferences: { ...editingAgent.modelPreferences, sttModelId: e.target.value },
+                    })
+                  }
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200"
+                >
+                  <option value="gemini-3.5-transcribe">Gemini 3.5 Transcribe</option>
+                </select>
+              </div>
+            </div>
+
             <div className="flex items-center justify-end gap-3 mt-3 pt-3 border-t border-slate-800">
               <button
                 onClick={() => setEditingAgent(null)}

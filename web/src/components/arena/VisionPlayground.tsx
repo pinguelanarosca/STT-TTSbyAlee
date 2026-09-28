@@ -61,7 +61,7 @@ export const VisionPlayground: React.FC<VisionPlaygroundProps> = ({ activeAgent,
           </div>
           <div>
             <h3 className="text-sm font-semibold text-slate-100">Gemini Lens / Visão</h3>
-            <p className="text-xs text-slate-400">Modelo: gemini-3.8-flash (Multimodal Vision)</p>
+            <p className="text-xs text-slate-400">Modelo: gemini-3.1-flash-lite (Flash-Lite Multimodal Vision)</p>
           </div>
         </div>
       </div>

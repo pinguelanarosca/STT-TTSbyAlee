@@ -2,15 +2,20 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  * 
- * Implementação Node.js do Cliente Gemini utilizando o SDK oficial @google/genai.
- * Executa estritamente no backend com suporte a variáveis de ambiente (process.env.GEMINI_API_KEY)
- * e chave opcional enviada pelo cliente no header Authorization ou payload.
+ * Implementação Node.js do Cliente Gemini com Whitelist Estrita
+ * e Motor de Fallback Imediato (Zero-Retry).
  */
 
 import { GoogleGenAI } from '@google/genai';
 import { TtsSynthesisRequest, SttTranscriptionRequest } from '@shared/types/gemini';
 import { DiscoveredModelInfo } from '@shared/types/models';
-import { getFallbackModelForTask, normalizeModelId } from '@shared/constants/modelsCatalog';
+import {
+  executeWithZeroRetryFallback,
+  AUTH_TEST_INITIAL_MODEL,
+  TTS_MODELS_WHITELIST,
+  FLASH_LITE_MODELS_WHITELIST,
+  STT_UNARY_MODELS_WHITELIST,
+} from '@shared/constants/modelsCatalog';
 import { base64ToUint8Array, pcmToWav, uint8ArrayToBase64 } from '@shared/utils/pcmWav';
 
 export class GeminiServerClient {
@@ -30,67 +35,77 @@ export class GeminiServerClient {
   }
 
   /**
-   * Síntese de fala utilizando os modelos dedicados Gemini TTS.
+   * Síntese de fala utilizando a cadeia estrita de fallback TTS (Zero-Retry).
+   * Ordem: gemini-3.8-flash-lite-tts -> gemini-3.8-flash-tts -> gemini-3.1-flash-tts-preview -> gemini-2.5-flash-preview-tts
    */
   public async synthesizeSpeech(
     request: TtsSynthesisRequest,
     overrideApiKey?: string
-  ): Promise<{ audioBase64: string; mimeType: string; sampleRate: number }> {
+  ): Promise<{ audioBase64: string; mimeType: string; sampleRate: number; modelUsed: string }> {
     const ai = this.getClient(overrideApiKey);
-    const targetModel = normalizeModelId(request.modelId, 'tts');
-
     const voiceName = request.voiceName || 'Puck';
     const systemPrompt = request.systemInstruction || 'Natural, clear speech with human breathing pauses';
 
-    const response = await ai.models.generateContent({
-      model: targetModel,
-      contents: [
-        {
-          role: 'user',
-          parts: [
+    const { result, usedModelId } = await executeWithZeroRetryFallback(
+      'tts',
+      request.modelId,
+      async (modelId) => {
+        const response = await ai.models.generateContent({
+          model: modelId,
+          contents: [
             {
-              text: request.text,
-              // @ts-ignore - speechMetadata suportado pela API Gemini 3.8 TTS
-              speechMetadata: {
-                style: systemPrompt,
-              },
+              role: 'user',
+              parts: [
+                {
+                  text: request.text,
+                  // @ts-ignore - speechMetadata suportado pela API Gemini TTS
+                  speechMetadata: {
+                    style: systemPrompt,
+                  },
+                },
+              ],
             },
           ],
-        },
-      ],
-      config: {
-        // @ts-ignore
-        responseModalities: ['AUDIO'],
-        speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: {
-              voiceName,
+          config: {
+            // @ts-ignore
+            responseModalities: ['AUDIO'],
+            speechConfig: {
+              voiceConfig: {
+                prebuiltVoiceConfig: {
+                  voiceName,
+                },
+              },
             },
           },
-        },
-      },
-    });
+        });
 
-    const candidatePart = response.candidates?.[0]?.content?.parts?.[0];
-    if (!candidatePart?.inlineData?.data) {
-      throw new Error('O modelo não retornou dados de áudio na resposta de TTS.');
-    }
+        const candidatePart = response.candidates?.[0]?.content?.parts?.[0];
+        if (!candidatePart?.inlineData?.data) {
+          throw new Error(`Modelo "${modelId}" não retornou dados de áudio.`);
+        }
 
-    const rawBase64 = candidatePart.inlineData.data;
-    const rawBytes = base64ToUint8Array(rawBase64);
-    let finalBase64 = rawBase64;
+        const rawBase64 = candidatePart.inlineData.data;
+        const rawBytes = base64ToUint8Array(rawBase64);
+        let finalBase64 = rawBase64;
 
-    // Encapsula em WAV 24kHz se não tiver container RIFF
-    const isWav = rawBytes.length > 4 && rawBytes[0] === 0x52 && rawBytes[1] === 0x49 && rawBytes[2] === 0x46 && rawBytes[3] === 0x46;
-    if (!isWav) {
-      const wavBytes = pcmToWav(rawBytes, 24000, 1, 16);
-      finalBase64 = uint8ArrayToBase64(wavBytes);
-    }
+        // Encapsula em WAV 24kHz se não tiver container RIFF
+        const isWav = rawBytes.length > 4 && rawBytes[0] === 0x52 && rawBytes[1] === 0x49 && rawBytes[2] === 0x46 && rawBytes[3] === 0x46;
+        if (!isWav) {
+          const wavBytes = pcmToWav(rawBytes, 24000, 1, 16);
+          finalBase64 = uint8ArrayToBase64(wavBytes);
+        }
+
+        return {
+          audioBase64: finalBase64,
+          mimeType: 'audio/wav',
+          sampleRate: 24000,
+        };
+      }
+    );
 
     return {
-      audioBase64: finalBase64,
-      mimeType: 'audio/wav',
-      sampleRate: 24000,
+      ...result,
+      modelUsed: usedModelId,
     };
   }
 
@@ -102,36 +117,42 @@ export class GeminiServerClient {
     overrideApiKey?: string
   ): Promise<string> {
     const ai = this.getClient(overrideApiKey);
-    const targetModel = normalizeModelId(request.modelId, 'stt_unary');
-
     const instruction = request.formattingInstruction || 'Transcreva com precisão ortográfica e pontuação correta.';
 
-    const response = await ai.models.generateContent({
-      model: targetModel,
-      contents: {
-        parts: [
-          {
-            inlineData: {
-              mimeType: request.mimeType || 'audio/wav',
-              data: request.audioBase64,
-            },
+    const { result } = await executeWithZeroRetryFallback(
+      'stt_unary',
+      request.modelId,
+      async (modelId) => {
+        const response = await ai.models.generateContent({
+          model: modelId,
+          contents: {
+            parts: [
+              {
+                inlineData: {
+                  mimeType: request.mimeType || 'audio/wav',
+                  data: request.audioBase64,
+                },
+              },
+              {
+                text: `Transcreva o áudio respeitando estritamente: ${instruction}`,
+              },
+            ],
           },
-          {
-            text: `Transcreva o áudio respeitando: ${instruction}`,
-          },
-        ],
-      },
-    });
+        });
 
-    const text = response.text || '';
-    if (!text) {
-      throw new Error('Nenhum texto transcrito retornado pelo modelo.');
-    }
-    return text.trim();
+        const text = response.text || '';
+        if (!text) {
+          throw new Error(`Modelo "${modelId}" não retornou texto transcrito.`);
+        }
+        return text.trim();
+      }
+    );
+
+    return result;
   }
 
   /**
-   * Análise visual multimodal com gemini-3.8-flash.
+   * Análise visual multimodal com a whitelist Flash-Lite (gemini-3.1-flash-lite -> gemini-3.5-flash-lite -> gemini-2.5-flash-lite).
    */
   public async analyzeVision(
     imageBase64: string,
@@ -140,44 +161,91 @@ export class GeminiServerClient {
     modelId?: string
   ): Promise<string> {
     const ai = this.getClient(overrideApiKey);
-    const targetModel = normalizeModelId(modelId, 'vision');
 
-    const response = await ai.models.generateContent({
-      model: targetModel,
-      contents: {
-        parts: [
-          {
-            inlineData: {
-              mimeType: 'image/jpeg',
-              data: imageBase64,
-            },
+    const { result } = await executeWithZeroRetryFallback(
+      'vision',
+      modelId,
+      async (targetModel) => {
+        const response = await ai.models.generateContent({
+          model: targetModel,
+          contents: {
+            parts: [
+              {
+                inlineData: {
+                  mimeType: 'image/jpeg',
+                  data: imageBase64,
+                },
+              },
+              {
+                text: query || 'Descreva detalhadamente o conteúdo visual desta imagem.',
+              },
+            ],
           },
-          {
-            text: query || 'Descreva detalhadamente o conteúdo desta imagem.',
-          },
-        ],
-      },
-    });
+        });
 
-    return response.text || '';
+        const text = response.text || '';
+        if (!text) {
+          throw new Error(`Modelo "${targetModel}" não retornou descrição visual.`);
+        }
+        return text.trim();
+      }
+    );
+
+    return result;
   }
 
   /**
-   * Descoberta de modelos disponíveis na API Gemini.
+   * Validação de chave de API utilizando inicialmente gemini-3.1-flash-lite com zero-retry fallback.
+   */
+  public async testApiKey(overrideApiKey: string): Promise<boolean> {
+    const ai = this.getClient(overrideApiKey);
+
+    try {
+      await executeWithZeroRetryFallback(
+        'auth_test',
+        AUTH_TEST_INITIAL_MODEL,
+        async (modelId) => {
+          const response = await ai.models.generateContent({
+            model: modelId,
+            contents: 'ping',
+          });
+          if (!response) {
+            throw new Error(`Sem resposta do modelo ${modelId}`);
+          }
+          return true;
+        }
+      );
+      return true;
+    } catch (err) {
+      return false;
+    }
+  }
+
+  /**
+   * Descoberta de modelos filtrada estritamente pela whitelist operacional.
    */
   public async discoverModels(overrideApiKey?: string): Promise<DiscoveredModelInfo[]> {
     const ai = this.getClient(overrideApiKey);
     const modelsPager = await ai.models.list();
     const result: DiscoveredModelInfo[] = [];
 
+    const allowedIds = new Set<string>([
+      ...TTS_MODELS_WHITELIST,
+      ...FLASH_LITE_MODELS_WHITELIST,
+      ...STT_UNARY_MODELS_WHITELIST,
+    ]);
+
     for await (const m of modelsPager) {
-      result.push({
-        id: (m.name || '').replace(/^models\//, ''),
-        displayName: m.displayName || '',
-        description: m.description || '',
-        supportedGenerationMethods: m.supportedActions || [],
-        discoveredAt: Date.now(),
-      });
+      const cleanId = (m.name || '').replace(/^models\//, '');
+      if (allowedIds.has(cleanId)) {
+        result.push({
+          id: cleanId,
+          displayName: m.displayName || cleanId,
+          description: m.description || '',
+          supportedGenerationMethods: m.supportedActions || [],
+          discoveredAt: Date.now(),
+        });
+      }
     }
 
     return result;

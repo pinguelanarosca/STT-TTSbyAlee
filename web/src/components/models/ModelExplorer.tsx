@@ -6,8 +6,8 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Cpu, RefreshCw, CheckCircle2, AlertOctagon, Sparkles, Filter } from 'lucide-react';
-import { KNOWN_MODELS, TASK_FALLBACK_CHAINS } from '@shared/constants/modelsCatalog';
+import { Cpu, RefreshCw, CheckCircle2, AlertOctagon, Sparkles, Filter, MapPin } from 'lucide-react';
+import { KNOWN_MODELS, TTS_MODELS_WHITELIST, FLASH_LITE_MODELS_WHITELIST, STT_UNARY_MODELS_WHITELIST, STT_LIVE_MODELS_WHITELIST } from '@shared/constants/modelsCatalog';
 import { DiscoveredModelInfo } from '@shared/types/models';
 import { geminiApi } from '../../services/geminiApiClient';
 
@@ -41,9 +41,9 @@ export const ModelExplorer: React.FC = () => {
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-bold text-slate-100">Explorador de Modelos Gemini</h2>
+          <h2 className="text-lg font-bold text-slate-100">Explorador de Modelos Gemini (Whitelist Estrita)</h2>
           <p className="text-xs text-slate-400 mt-1">
-            Matriz de capacidades segregadas por protocolo: TTS nativo, STT Unary, Visão e Live Audio.
+            Matriz de capacidades e modelos homologados por protocolo: TTS nativo, STT Unary, Visão Flash-Lite.
           </p>
         </div>
 
@@ -61,31 +61,40 @@ export const ModelExplorer: React.FC = () => {
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-lg">
         <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-2">
           <Sparkles className="w-3.5 h-3.5 text-blue-400" />
-          <span>Cadeias Oficiais de Fallback por Tarefa (Zero Cross-Category)</span>
+          <span>Cadeias Oficiais de Fallback por Tarefa (Zero Cross-Category & Zero-Retry)</span>
         </h3>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <div className="bg-slate-950 p-3 rounded-xl border border-slate-800">
-            <span className="text-[10px] text-blue-400 font-semibold block uppercase">TTS (Áudio Nativo)</span>
-            <span className="text-xs text-slate-200 font-mono mt-1 block">gemini-3.8-flash-lite-tts</span>
-            <span className="text-[10px] text-slate-500 mt-0.5 block">Substituto: 3.8-flash-tts</span>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800">
+            <span className="text-[10px] text-blue-400 font-semibold block uppercase">TTS (Ordem Estrita 1 a 4)</span>
+            <div className="text-xs text-slate-200 font-mono mt-1 space-y-0.5">
+              {TTS_MODELS_WHITELIST.map((id, idx) => (
+                <div key={id} className="flex items-center gap-1.5">
+                  <span className="text-slate-500">{idx + 1}.</span>
+                  <span>{KNOWN_MODELS[id]?.displayName || id}</span>
+                </div>
+              ))}
+            </div>
           </div>
 
-          <div className="bg-slate-950 p-3 rounded-xl border border-slate-800">
-            <span className="text-[10px] text-red-400 font-semibold block uppercase">STT Unary (generateContent)</span>
-            <span className="text-xs text-slate-200 font-mono mt-1 block">gemini-3.5-transcribe</span>
-            <span className="text-[10px] text-slate-500 mt-0.5 block">Áudio pré-gravado em texto</span>
+          <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800">
+            <span className="text-[10px] text-red-400 font-semibold block uppercase">STT (Transcrição de Voz)</span>
+            <div className="text-xs text-slate-200 font-mono mt-1 space-y-1">
+              <div>Unary: <span className="text-slate-300">Gemini 3.5 Transcribe</span></div>
+              <div>Live: <span className="text-slate-300">Gemini 3.5 Transcribe Live</span></div>
+              <span className="text-[10px] text-slate-500 mt-1 block">Regra: sttModelId !== ttsModelId</span>
+            </div>
           </div>
 
-          <div className="bg-slate-950 p-3 rounded-xl border border-slate-800">
-            <span className="text-[10px] text-indigo-400 font-semibold block uppercase">STT Live (WebSocket)</span>
-            <span className="text-xs text-slate-200 font-mono mt-1 block">gemini-3.5-transcribe-live</span>
-            <span className="text-[10px] text-slate-500 mt-0.5 block">Live API streaming contínuo</span>
-          </div>
-
-          <div className="bg-slate-950 p-3 rounded-xl border border-slate-800">
-            <span className="text-[10px] text-emerald-400 font-semibold block uppercase">Vision / Multimodal</span>
-            <span className="text-xs text-slate-200 font-mono mt-1 block">gemini-3.8-flash</span>
-            <span className="text-[10px] text-slate-500 mt-0.5 block">Substituto: 3.1-pro-preview</span>
+          <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800">
+            <span className="text-[10px] text-emerald-400 font-semibold block uppercase">Flash-Lite / Vision / Auth (1 a 3)</span>
+            <div className="text-xs text-slate-200 font-mono mt-1 space-y-0.5">
+              {FLASH_LITE_MODELS_WHITELIST.map((id, idx) => (
+                <div key={id} className="flex items-center gap-1.5">
+                  <span className="text-slate-500">{idx + 1}.</span>
+                  <span>{KNOWN_MODELS[id]?.displayName || id}</span>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </div>
@@ -99,8 +108,7 @@ export const ModelExplorer: React.FC = () => {
             { id: 'all', label: 'Todos' },
             { id: 'tts', label: 'TTS' },
             { id: 'stt_transcription', label: 'STT' },
-            { id: 'general_multimodal', label: 'Multimodal / Visão' },
-            { id: 'live_audio', label: 'Live' },
+            { id: 'general_multimodal', label: 'Flash-Lite / Visão' },
           ].map((cat) => (
             <button
               key={cat.id}
@@ -136,15 +144,9 @@ export const ModelExplorer: React.FC = () => {
                   <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 font-mono">
                     {model.category}
                   </span>
-                  {model.deprecated ? (
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-500/10 text-red-400 border border-red-500/20">
-                      Encerrado
-                    </span>
-                  ) : (
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                      {model.availability.toUpperCase()}
-                    </span>
-                  )}
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                    {model.availability.toUpperCase()}
+                  </span>
                 </div>
               </div>
 
@@ -153,11 +155,18 @@ export const ModelExplorer: React.FC = () => {
             </div>
 
             <div className="pt-3 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-500">
-              <div>
-                Entrada: {model.inputModalities.audio ? '🎤 ' : ''}{model.inputModalities.text ? '📄 ' : ''}{model.inputModalities.image ? '🖼️ ' : ''}
+              <div className="flex items-center gap-3">
+                <span>Entrada: {model.inputModalities.audio ? '🎤 ' : ''}{model.inputModalities.text ? '📄 ' : ''}{model.inputModalities.image ? '🖼️ ' : ''}</span>
+                <span>Saída: {model.outputModalities.audio ? '🔊 Áudio' : '📄 Texto'}</span>
               </div>
               <div>
-                Saída: {model.outputModalities.audio ? '🔊 Áudio' : '📄 Texto'}
+                {model.capabilities?.mapsGrounding ? (
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-950/50 text-emerald-300 border border-emerald-800 flex items-center gap-1">
+                    <MapPin className="w-2.5 h-2.5" /> Maps Grounding
+                  </span>
+                ) : (
+                  <span className="text-[10px] text-slate-600">Maps: N/A</span>
+                )}
               </div>
             </div>
           </div>

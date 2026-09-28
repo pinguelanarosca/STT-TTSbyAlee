@@ -62,6 +62,10 @@ export interface ModelTaskCapabilities {
   };
 }
 
+export interface ModelToolCapabilities {
+  mapsGrounding: boolean;
+}
+
 export interface ModelDescriptor {
   id: string;
   displayName: string;
@@ -71,6 +75,7 @@ export interface ModelDescriptor {
   inputModalities: ModelInputModalities;
   outputModalities: ModelOutputModalities;
   tasks: ModelTaskCapabilities;
+  capabilities?: ModelToolCapabilities;
   apiMethods: ModelApiMethod[];
   streaming: boolean;
   deprecated: boolean;

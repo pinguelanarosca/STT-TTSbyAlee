@@ -17,11 +17,18 @@ export type AgentCategory =
 
 export type GeminiVoiceName = 'Puck' | 'Charon' | 'Kore' | 'Fenrir' | 'Aoede';
 
+export type AmbienceType = 'none' | 'room' | 'studio' | 'hall' | 'warm';
+
 export interface AgentVoiceConfig {
   preferredVoice: GeminiVoiceName | string;
   pitchMultiplier: number;  // 0.5 a 2.0 (1.0 = normal)
   rateMultiplier: number;   // 0.5 a 2.0 (1.0 = normal)
   volume: number;           // 0.0 a 1.0 (1.0 = 100%)
+  bass?: number;            // -10 a +10 dB (0 = normal)
+  mid?: number;             // -10 a +10 dB (0 = normal)
+  treble?: number;          // -10 a +10 dB (0 = normal)
+  ambience?: AmbienceType;
+  ambienceIntensity?: number; // 0 a 100%
 }
 
 export interface AgentModalityInstructions {
@@ -47,6 +54,9 @@ export interface AgentMetadata {
 export interface AgentModelPreferences {
   ttsModelId?: string;      // ID do modelo preferido para síntese/interpretação
   sttModelId?: string;      // ID do modelo preferido para transcrição
+  sttLiveModelId?: string;  // ID do modelo preferido para streaming/live
+  visionModelId?: string;   // ID do modelo preferido para Lens/Visão
+  generalModelId?: string;  // ID do modelo geral/fallback
 }
 
 export interface CanonicalAgent {

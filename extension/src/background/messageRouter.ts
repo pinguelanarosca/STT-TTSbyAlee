@@ -25,7 +25,9 @@ export async function handleExtensionMessage(
           return { success: false, error: 'Chave de API Gemini não configurada. Abra as opções para configurar.' };
         }
 
-        const agent = getCanonicalAgent(agentId);
+        const agentsSettings = await chromeStorage.get('agents');
+        const customAgent = agentsSettings.customAgents?.find((a) => a.metadata.id === agentId);
+        const agent = customAgent || getCanonicalAgent(agentId);
         const modelsSettings = await chromeStorage.get('models');
         const audioSettings = await chromeStorage.get('audio');
 
@@ -67,7 +69,9 @@ export async function handleExtensionMessage(
           return { success: false, error: 'Chave de API Gemini não configurada.' };
         }
 
-        const agent = getCanonicalAgent(agentId);
+        const agentsSettings = await chromeStorage.get('agents');
+        const customAgent = agentsSettings.customAgents?.find((a) => a.metadata.id === agentId);
+        const agent = customAgent || getCanonicalAgent(agentId);
         const modelsSettings = await chromeStorage.get('models');
         const sttModelId = agent.modelPreferences.sttModelId || modelsSettings.sttModelId;
 
