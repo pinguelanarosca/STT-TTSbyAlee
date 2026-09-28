@@ -104,7 +104,7 @@ export class GeminiDirectClient {
   }
 
   /**
-   * Transcreve áudio gravado via protocolo Unary (gemini-3.5-transcribe) com Zero-Retry Fallback.
+   * Transcreve áudio gravado via protocolo STT Unary (gemini-3.5-flash-lite -> gemini-3.1-flash-lite) com Zero-Retry Fallback.
    */
   public async transcribeAudio(
     request: SttTranscriptionRequest,
@@ -165,7 +165,7 @@ export class GeminiDirectClient {
   }
 
   /**
-   * Inspeciona conteúdo visual com a whitelist Flash-Lite (gemini-3.1-flash-lite -> 3.5 -> 2.5).
+   * Inspeciona conteúdo visual com a whitelist Vision/Geral (gemini-3.5-flash-lite -> gemini-3.1-flash-lite).
    */
   public async inspectVisionContext(
     imageBase64: string,
@@ -218,7 +218,7 @@ export class GeminiDirectClient {
   }
 
   /**
-   * Testa a validade da chave de API utilizando inicialmente gemini-3.1-flash-lite (com fallback Zero-Retry para 3.5 / 2.5).
+   * Testa a validade da chave de API utilizando a cadeia Auth (gemini-3.1-flash-lite -> gemini-3.5-flash-lite).
    */
   public async testApiKey(apiKey: string): Promise<boolean> {
     try {

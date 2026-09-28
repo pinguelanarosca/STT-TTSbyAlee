@@ -110,7 +110,7 @@ export class GeminiServerClient {
   }
 
   /**
-   * Transcrição de áudio via protocolo Unary (gemini-3.5-transcribe).
+   * Transcrição de áudio via protocolo STT Unary (gemini-3.5-flash-lite -> gemini-3.1-flash-lite).
    */
   public async transcribeAudio(
     request: SttTranscriptionRequest,
@@ -152,7 +152,7 @@ export class GeminiServerClient {
   }
 
   /**
-   * Análise visual multimodal com a whitelist Flash-Lite (gemini-3.1-flash-lite -> gemini-3.5-flash-lite -> gemini-2.5-flash-lite).
+   * Análise visual multimodal com a whitelist Vision/Geral (gemini-3.5-flash-lite -> gemini-3.1-flash-lite).
    */
   public async analyzeVision(
     imageBase64: string,
@@ -195,7 +195,7 @@ export class GeminiServerClient {
   }
 
   /**
-   * Validação de chave de API utilizando inicialmente gemini-3.1-flash-lite com zero-retry fallback.
+   * Validação de chave de API utilizando a cadeia Auth (gemini-3.1-flash-lite -> gemini-3.5-flash-lite).
    */
   public async testApiKey(overrideApiKey: string): Promise<boolean> {
     const ai = this.getClient(overrideApiKey);
