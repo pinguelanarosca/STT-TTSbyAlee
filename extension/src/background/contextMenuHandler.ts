@@ -7,35 +7,52 @@
 
 import { sendTabMessageSafe } from '../utils/tabMessenger';
 
-export function setupContextMenus(): void {
-  chrome.runtime.onInstalled.addListener(() => {
-    chrome.contextMenus.removeAll(() => {
-      chrome.contextMenus.create({
-        id: 'read_selection_menu',
-        title: 'Ler em voz alta com Gemini (TTS)',
-        contexts: ['selection'],
-      });
+function createMenus(): void {
+  chrome.contextMenus.removeAll(() => {
+    // 1. Menu Principal para texto selecionado
+    chrome.contextMenus.create({
+      id: 'read_selection_menu',
+      title: '🔊 Ler em voz alta com Gemini (TTS)',
+      contexts: ['selection'],
+    });
 
-      chrome.contextMenus.create({
-        id: 'translate_selection_menu',
-        title: 'Traduzir e Ouvir Seleção',
-        contexts: ['selection'],
-      });
+    // 2. Menu de Tradução
+    chrome.contextMenus.create({
+      id: 'translate_selection_menu',
+      title: '🌐 Traduzir e Ouvir Seleção',
+      contexts: ['selection'],
+    });
 
-      chrome.contextMenus.create({
-        id: 'summarize_selection_menu',
-        title: 'Resumir e Ouvir Seleção',
-        contexts: ['selection'],
-      });
+    // 3. Menu de Resumo
+    chrome.contextMenus.create({
+      id: 'summarize_selection_menu',
+      title: '📝 Resumir e Ouvir Seleção',
+      contexts: ['selection'],
+    });
 
-      chrome.contextMenus.create({
-        id: 'dictate_menu',
-        title: 'Ditar com Gemini (STT)',
-        contexts: ['editable'],
-      });
+    // 4. Menu de Ditado para campos de texto
+    chrome.contextMenus.create({
+      id: 'dictate_menu',
+      title: '🎙 Ditar com Gemini (STT)',
+      contexts: ['editable'],
     });
   });
+}
 
+export function setupContextMenus(): void {
+  // Cria os menus imediatamente ao iniciar o Service Worker
+  createMenus();
+
+  // Garante a criação em eventos de ciclo de vida
+  chrome.runtime.onInstalled.addListener(() => {
+    createMenus();
+  });
+
+  chrome.runtime.onStartup.addListener(() => {
+    createMenus();
+  });
+
+  // Listener de clique no menu de contexto
   chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     if (!tab || !tab.id) return;
 
@@ -69,3 +86,4 @@ export function setupContextMenus(): void {
     }
   });
 }
+

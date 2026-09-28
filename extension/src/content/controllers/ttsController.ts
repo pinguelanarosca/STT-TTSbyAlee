@@ -72,7 +72,13 @@ export class TtsController {
           if (!response || !response.success || !response.data?.audioBase64) {
             const err = response?.error || 'Falha na resposta do Service Worker';
             console.error('[TTS Controller]', err);
-            hud.setStatus('idle', err.includes('Chave') ? 'Configure a Chave' : 'Erro TTS');
+            if (err.includes('Chave')) {
+              hud.setStatus('idle', 'Chave Ausente');
+              hud.setTextPreview('⚠️ Chave de API Gemini não configurada. Abra as Opções da Extensão (clicando com o botão direito no ícone da extensão -> Opções) e insira sua chave.');
+            } else {
+              hud.setStatus('idle', 'Erro TTS');
+              hud.setTextPreview(`❌ Erro ao sintetizar: ${err}`);
+            }
             return;
           }
 
