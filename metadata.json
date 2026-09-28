@@ -1,0 +1,6 @@
+{
+  "name": "EXT TTS STT - Chrome Extension & Studio",
+  "description": "Chrome Extension and Web Studio for Gemini Multimodal Text-to-Speech and Speech-to-Text with customizable AI agents.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
